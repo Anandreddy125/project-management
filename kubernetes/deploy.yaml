@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anrs
+  labels:
+    app: anrs
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: anrs
+  template:
+    metadata:
+      labels:
+        app: anrs
+    spec:
+      containers:
+      - name: anrs
+        image: anrs125/jangam:latest
+        ports:
+        - containerPort: 80
