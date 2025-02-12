@@ -5,7 +5,7 @@
     </div>
 
     <h2 class="font-bold tracking-tight text-center text-2xl">
-        Login page updated testing last version
+        Login page updated private dcoker image pull and deploying k3s
     </h2>
 
     @if(session()->has('oidc_error'))
