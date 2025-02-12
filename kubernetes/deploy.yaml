@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
       - name: anrs
-        image: anrs125/terraform:1.0.2
+        image: anrs125/private:1.0.1
         ports:
         - containerPort: 80
