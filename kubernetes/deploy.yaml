@@ -2,10 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: anrs
-  labels:
-    app: anrs
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: anrs
@@ -15,7 +13,8 @@ spec:
         app: anrs
     spec:
       containers:
-      - name: anrs
-        image: anrs125/private:1.0.1
-        ports:
-        - containerPort: 80
+      - name: anrs-container
+        image: anrs125/terraform:latest  # This will be replaced dynamically
+        imagePullPolicy: Always
+      imagePullSecrets:
+      - name: regcred  # Reference the Kubernetes secret
