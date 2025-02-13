@@ -5,7 +5,7 @@
     </div>
 
     <h2 class="font-bold tracking-tight text-center text-2xl">
-        Login page demo pipeline
+        Login page testing for git-commit on docker version
     </h2>
 
     @if(session()->has('oidc_error'))
