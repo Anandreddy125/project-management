@@ -5,7 +5,7 @@
     </div>
 
     <h2 class="font-bold tracking-tight text-center text-2xl">
-        Login page for sagar
+        Login page for master and client
     </h2>
 
     @if(session()->has('oidc_error'))
