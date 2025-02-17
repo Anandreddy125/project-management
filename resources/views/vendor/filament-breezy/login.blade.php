@@ -5,7 +5,7 @@
     </div>
 
     <h2 class="font-bold tracking-tight text-center text-2xl">
-        Login sample-page test-02
+        Login sample-page test-03
     </h2>
 
     @if(session()->has('oidc_error'))
