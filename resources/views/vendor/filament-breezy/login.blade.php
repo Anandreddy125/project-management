@@ -5,7 +5,7 @@
     </div>
 
     <h2 class="font-bold tracking-tight text-center text-2xl">
-        Login sample-page gir clean
+        Login sample-page github repo clean
     </h2>
 
     @if(session()->has('oidc_error'))
