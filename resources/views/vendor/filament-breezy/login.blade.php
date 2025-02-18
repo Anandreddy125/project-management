@@ -5,7 +5,7 @@
     </div>
 
     <h2 class="font-bold tracking-tight text-center text-2xl">
-        Login sample-page webhook-06
+        Login sample-page webhook-08
     </h2>
 
     @if(session()->has('oidc_error'))
