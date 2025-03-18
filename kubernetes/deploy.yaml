@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: anrs
 spec:
-  replicas: 6
+  replicas: 7
   selector:
     matchLabels:
       app: anrs
