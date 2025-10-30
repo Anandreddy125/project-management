@@ -11,7 +11,7 @@ class Kernel extends ConsoleKernel
      * Define the application's command schedule.
      *
      * @param  \Illuminate\Console\Scheduling\Schedule  $asdfasdfasdfschedule
-     * @return void testing tagsfdasdfasfsadfsadfasdf hgfkcm
+     * @return void testing bjvbm
      */
     protected function schedule(Schedule $schedule)
     {
