@@ -18,7 +18,7 @@ class Kernel extends ConsoleKernel
         // $schedule->command('inspire')->hourly();
     }
 
-    //test for build auto test
+    //test for build auto 
 
     /**
      * Register the commands for the application.
