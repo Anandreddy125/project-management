@@ -1,0 +1,116 @@
+this is assigning to previous commit id for docker images
+
+pipeline {
+    agent any
+    environment {
+        IMAGE_NAME = "anrs125/sample-private"
+        VERSION_FILE = "version.txt"
+        HISTORY_FILE = "version_history.txt"
+        DOCKER_CREDENTIALS_ID = "docker"
+        KUBERNETES_CREDENTIALS_ID = "k3s"
+    }
+    stages {
+        stage('Initialize Version') {
+            steps {
+                script {
+                    if (fileExists(VERSION_FILE)) {
+                        STABLE_VERSION = sh(script: "cat ${VERSION_FILE}", returnStdout: true).trim()
+                    } else {
+                        STABLE_VERSION = "1.0.0"
+                    }
+                    def parts = STABLE_VERSION.tokenize('.')
+                    def major = parts[0]
+                    def minor = parts[1]
+                    def patch = parts[2].tokenize('-')[0].toInteger() + 1 // Handle existing commit hash
+                    COMMIT_ID = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    
+                    // New version format: 1.0.1-commitabc123
+                    BUILD_VERSION = "${major}.${minor}.${patch}-commit${COMMIT_ID}"
+                    echo "Next build version: ${BUILD_VERSION}"
+                }
+            }
+        }
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+        stage('Checkout from Git') {
+            steps {
+                git branch: 'master', url: 'https://github.com/Anandreddy125/project-management.git'
+            }
+        }
+        stage('OWASP FS SCAN') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit',
+                    odcInstallation: 'DP-check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('Docker Build & Push to Private Registry') {
+            steps {
+                script {
+                    withDockerRegistry([credentialsId: DOCKER_CREDENTIALS_ID, toolName: 'docker']) {
+                        echo "Building Docker image with version: ${BUILD_VERSION}"
+                        sh "docker build -t ${IMAGE_NAME}:${BUILD_VERSION} ."
+                        echo "Pushing Docker image ${IMAGE_NAME}:${BUILD_VERSION} to Docker Hub"
+                        sh "docker push ${IMAGE_NAME}:${BUILD_VERSION}"
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    dir('kubernetes') {
+                        withKubeConfig(credentialsId: KUBERNETES_CREDENTIALS_ID) {
+                            sh """
+                            sed -i 's|image: ${IMAGE_NAME}:.*|image: ${IMAGE_NAME}:${BUILD_VERSION}|' deploy.yaml
+                            kubectl apply -f deploy.yaml
+                            kubectl rollout status deployment/anrs || {
+                                echo "Deployment failed, rolling back..."
+                                kubectl rollout undo deployment/anrs
+                                exit 1
+                            }
+                            """
+                        }
+                    }
+                }
+            }
+        }
+    }
+    post {
+        success {
+            script {
+                echo "Saving new stable version: ${BUILD_VERSION}"
+                sh "echo ${BUILD_VERSION} > ${VERSION_FILE}"
+                sh "echo ${BUILD_VERSION} >> ${HISTORY_FILE}"
+            }
+            slackSend channel: '#jenkins', color: '#36A64F', message: ":white_check_mark: *Deployment Successful!*\n\n:pushpin: *Application:* Laravel\n:rocket: *Environment:* Testing\n:link: *Job:* ${env.JOB_NAME} #${env.BUILD_NUMBER}\n:mag: *Check Here:* ${env.BUILD_URL}"
+        }
+        failure {
+            script {
+                echo "Rolling back to previous stable version..."
+                def LAST_SUCCESSFUL_VERSION = "1.0.0" // Default fallback
+                if (fileExists(HISTORY_FILE)) {
+                    def successfulVersions = sh(script: """tac ${HISTORY_FILE} | sed '/^\\\$/d' | sed -n '2p'""", returnStdout: true).trim()
+                    LAST_SUCCESSFUL_VERSION = successfulVersions.replaceAll(/-commit.*/, "") ?: STABLE_VERSION
+                }
+                echo "Rolling back to version: ${LAST_SUCCESSFUL_VERSION}"
+                dir('kubernetes') {
+                    withKubeConfig(credentialsId: KUBERNETES_CREDENTIALS_ID) {
+                        sh """
+                        sed -i 's|image: ${IMAGE_NAME}:.*|image: ${IMAGE_NAME}:${LAST_SUCCESSFUL_VERSION}|' deploy.yaml
+                        kubectl apply -f deploy.yaml
+                        """
+                    }
+                }
+            }
+            slackSend channel: '#jenkins', color: '#FF0000', message: ":x: *Deployment Failed!*\n\n:pushpin: *Application:* Laravel\n:warning: *Environment:* Testing\n:link: *Job:* ${env.JOB_NAME} #${env.BUILD_NUMBER}\n:scroll: *Logs:* ${env.BUILD_URL}"
+        }
+        always {
+            echo 'Pipeline execution completed.'
+        }
+    }
+}
