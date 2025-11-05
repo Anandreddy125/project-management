@@ -16,6 +16,6 @@ spec:
     spec:
       containers:
       - name: anrs
-        image: anrs125/pipeline:v1.1
+        image: anrs125/farhan-testing:v1.1
         ports:
         - containerPort: 80

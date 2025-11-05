@@ -1,3 +1,26 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anrs-01
+  labels:
+    app: anrs-01
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: anrs-01
+  template:
+    metadata:
+      labels:
+        app: anrs-01
+    spec:
+      containers:
+      - name: anrs-01
+        image: anrs125/farhan-testing:v1.1
+        ports:
+      - containerPort: 80
+---
 apiVersion: v1
 kind: Service
 metadata:
