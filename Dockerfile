@@ -19,17 +19,3 @@ RUN apt-get update -y && \
 
 # Copy project files
 COPY . .
-
-# Copy environment file
-COPY .env.example .env
-
-# Install PHP and Node dependencies
-RUN composer install --no-interaction --prefer-dist --optimize-autoloader && \
-    npm install && \
-    php artisan key:generate
-
-# Expose app port (optional)
-EXPOSE 8000
-
-# Default command
-CMD ["bash", "./run.sh"]
