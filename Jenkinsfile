@@ -29,11 +29,11 @@ pipeline {
             steps { cleanWs() }
         }
 
-        stage('📥 Checkout Code') {
+        stage('Checkout Code') {
             steps {
                 script {
                     def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
-                    echo "🔹 Checking out branch: ${branchName}"
+                    echo "Checking out branch: ${branchName}"
 
                     checkout([$class: 'GitSCM',
                         branches: [[name: "*/${branchName}"]],
@@ -47,7 +47,7 @@ pipeline {
             }
         }
 
-        stage('🌿 Determine Environment') {
+        stage('Determine Environment') {
             steps {
                 script {
                     if (env.ACTUAL_BRANCH == "main" || env.ACTUAL_BRANCH == "staging") {
@@ -59,11 +59,11 @@ pipeline {
                         env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE   = "release"
                     } else {
-                        error("❌ Unsupported branch: ${env.ACTUAL_BRANCH}")
+                        error("Unsupported branch: ${env.ACTUAL_BRANCH}")
                     }
 
                     echo """
-                    🌍 Environment Info
+                      Environment Info
                     ------------------
                     Branch: ${env.ACTUAL_BRANCH}
                     Deploy: ${env.DEPLOY_ENV}
@@ -74,10 +74,9 @@ pipeline {
             }
         }
 
-        stage('🏷️ Generate Docker Tag') {
+        stage('Generate Docker Tag') {
             steps {
                 script {
-                    // ✅ Get 7-character commit hash
                     def commitId = sh(script: "git rev-parse HEAD | cut -c1-7", returnStdout: true).trim()
                     def imageTag = ""
 
@@ -88,17 +87,14 @@ pipeline {
                         imageTag = params.TARGET_VERSION.trim()
 
                     } else if (env.TAG_TYPE == "commit") {
-                        // ✅ Staging: commit-based tag
+
                         imageTag = "staging-${commitId}"
 
                     } else {
-                        // ✅ Production: Git tag if exists, else commit fallback
+
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
                         imageTag = tagName ?: "${commitId}"
                     }
-
-                    // ❌ No custom Jenkins display name — keep default build numbers
-                    // currentBuild.displayName = "${imageTag}"
 
                     env.IMAGE_TAG = imageTag
                     echo "🏷️ Final Image Tag: ${env.IMAGE_TAG}"
@@ -106,7 +102,7 @@ pipeline {
             }
         }
 
-        stage('🔐 Docker Login') {
+        stage('Docker Login') {
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
@@ -128,8 +124,6 @@ pipeline {
                         docker build --pull --no-cache -t ${imageFull} .
                         docker push ${imageFull}
                     """
-
-                    //  Production also gets a 'latest' tag
                     if (env.DEPLOY_ENV == "production") {
                         sh """
                             docker tag ${imageFull} ${env.IMAGE_NAME}:latest
