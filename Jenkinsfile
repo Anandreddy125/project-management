@@ -34,6 +34,7 @@ pipeline {
                 script {
                     def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
                     echo "🔹 Checking out branch: ${branchName}"
+
                     checkout([$class: 'GitSCM',
                         branches: [[name: "*/${branchName}"]],
                         userRemoteConfigs: [[
@@ -76,7 +77,7 @@ pipeline {
         stage('🏷️ Generate Docker Tag') {
             steps {
                 script {
-                    // ✅ Get exactly 7-character commit hash
+                    // ✅ Get 7-character commit hash
                     def commitId = sh(script: "git rev-parse HEAD | cut -c1-7", returnStdout: true).trim()
                     def imageTag = ""
 
@@ -87,18 +88,19 @@ pipeline {
                         imageTag = params.TARGET_VERSION.trim()
 
                     } else if (env.TAG_TYPE == "commit") {
-                        // ✅ Staging tag without date/time
+                        // ✅ Staging: commit-based tag
                         imageTag = "staging-${commitId}"
 
                     } else {
-                        // ✅ Production uses Git tag or commit-based fallback
+                        // ✅ Production: Git tag if exists, else commit fallback
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
-                        imageTag = tagName ?: "build-${commitId}"
+                        imageTag = tagName ?: "${commitId}"
                     }
 
-                    currentBuild.displayName = "${env.DEPLOY_ENV}-${imageTag}"
-                    env.IMAGE_TAG = imageTag
+                    // ❌ No custom Jenkins display name — keep default build numbers
+                    // currentBuild.displayName = "${imageTag}"
 
+                    env.IMAGE_TAG = imageTag
                     echo "🏷️ Final Image Tag: ${env.IMAGE_TAG}"
                 }
             }
@@ -115,24 +117,25 @@ pipeline {
             }
         }
 
-        stage('🐳 Docker Build & Push') {
+        stage('Docker Build & Push') {
             when { expression { return !params.ROLLBACK } }
             steps {
                 script {
                     def imageFull = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    echo "🚀 Building Docker image: ${imageFull}"
+                    echo "Building Docker image: ${imageFull}"
 
                     sh """
                         docker build --pull --no-cache -t ${imageFull} .
                         docker push ${imageFull}
                     """
 
+                    //  Production also gets a 'latest' tag
                     if (env.DEPLOY_ENV == "production") {
                         sh """
                             docker tag ${imageFull} ${env.IMAGE_NAME}:latest
                             docker push ${env.IMAGE_NAME}:latest
                         """
-                        echo "✅ Also pushed as latest."
+                        echo "Also pushed as latest."
                     }
 
                     sh "docker logout"
@@ -144,14 +147,15 @@ pipeline {
     post {
         success {
             echo """
-            ✅ Build & Push Successful!
+             Build & Push Successful!
             ---------------------------
-            📦 Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
-            🌍 Environment: ${env.DEPLOY_ENV}
+             Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+             Environment: ${env.DEPLOY_ENV}
+             Jenkins Build #: ${env.BUILD_NUMBER}
             """
         }
         failure {
-            echo "❌ Build failed. Check logs above."
+            echo "Build failed. Check logs above."
         }
         always {
             cleanWs()
