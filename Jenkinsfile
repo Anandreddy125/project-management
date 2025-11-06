@@ -8,16 +8,9 @@ pipeline {
     }
 
     environment {
-        // Repository & credentials
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
-
-        // Dynamic variables (initialized empty)
-        IMAGE_NAME            = ""
-        DEPLOY_ENV            = ""
-        TAG_TYPE              = ""
-        IMAGE_TAG             = ""
     }
 
     parameters {
@@ -32,30 +25,8 @@ pipeline {
 
     stages {
 
-        stage('🔍 Check Trigger Type') {
-            steps {
-                script {
-                    // Ignore non-master tag pushes
-                    if (env.GIT_BRANCH?.startsWith("refs/tags/") || env.BRANCH_NAME?.startsWith("refs/tags/")) {
-                        def tagRef = env.GIT_BRANCH ?: env.BRANCH_NAME
-                        echo "🚫 Tag push detected: ${tagRef}"
-
-                        if (!tagRef.contains("master")) {
-                            echo "⏭️ Skipping build for non-master tag push."
-                            currentBuild.result = 'SUCCESS'
-                            return
-                        }
-                    }
-
-                    echo "✅ Normal branch push detected — proceeding with pipeline."
-                }
-            }
-        }
-
         stage('🧹 Clean Workspace') {
-            steps {
-                cleanWs()
-            }
+            steps { cleanWs() }
         }
 
         stage('📥 Checkout Code') {
@@ -63,19 +34,13 @@ pipeline {
                 script {
                     def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
                     echo "🔹 Checking out branch: ${branchName}"
-
                     checkout([$class: 'GitSCM',
                         branches: [[name: "*/${branchName}"]],
                         userRemoteConfigs: [[
                             url: env.GIT_REPO,
                             credentialsId: env.GIT_CREDENTIALS_ID
-                        ]],
-                        extensions: [
-                            [$class: 'CloneOption', depth: 0, noTags: false, shallow: false],
-                            [$class: 'CheckoutOption', timeout: 30]
-                        ]
+                        ]]
                     ])
-
                     env.ACTUAL_BRANCH = branchName
                 }
             }
@@ -97,18 +62,18 @@ pipeline {
                     }
 
                     echo """
-                    🌍 Environment Details
-                    ---------------------
-                    Branch:        ${env.ACTUAL_BRANCH}
-                    Environment:   ${env.DEPLOY_ENV}
-                    Docker Image:  ${env.IMAGE_NAME}
-                    Tag Type:      ${env.TAG_TYPE}
+                    🌍 Environment Info
+                    ------------------
+                    Branch: ${env.ACTUAL_BRANCH}
+                    Deploy: ${env.DEPLOY_ENV}
+                    Repo:   ${env.IMAGE_NAME}
+                    Mode:   ${env.TAG_TYPE}
                     """
                 }
             }
         }
 
-        stage('🏷️ Set Image Tag') {
+        stage('🏷️ Generate Docker Tag') {
             steps {
                 script {
                     def commitId  = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
@@ -117,31 +82,23 @@ pipeline {
 
                     if (params.ROLLBACK) {
                         if (!params.TARGET_VERSION?.trim()) {
-                            error("Rollback requested but TARGET_VERSION is empty.")
+                            error("Rollback requested but no TARGET_VERSION provided.")
                         }
                         imageTag = params.TARGET_VERSION.trim()
-                        echo "⤴️ Rollback mode — using tag ${imageTag}"
 
                     } else if (env.TAG_TYPE == "commit") {
-                        // Staging: commit + timestamp
                         imageTag = "staging-${commitId}-${timestamp}"
-                        echo "🏷️ Using commit-based staging tag: ${imageTag}"
 
                     } else {
-                        // Production: use Git tag if available
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
-                        if (!tagName) {
-                            echo "⚠️ No Git tag found, using fallback build tag."
-                            imageTag = "build-${commitId}-${timestamp}"
-                        } else {
-                            imageTag = tagName
-                        }
-                        echo "🏷️ Final production tag: ${imageTag}"
+                        imageTag = tagName ?: "build-${commitId}-${timestamp}"
                     }
 
-                    // ✅ Persist globally
+                    // ✅ Persist globally in Jenkins
+                    currentBuild.displayName = "${env.DEPLOY_ENV}-${imageTag}"
                     env.IMAGE_TAG = imageTag
-                    echo "✅ Exported IMAGE_TAG globally: ${env.IMAGE_TAG}"
+
+                    echo "🏷️ Final Image Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -149,10 +106,9 @@ pipeline {
         stage('🔐 Docker Login') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
-                        sh """
-                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin
-                        """
+                    withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
+                        usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
+                        sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
                     }
                 }
             }
@@ -162,33 +118,23 @@ pipeline {
             when { expression { return !params.ROLLBACK } }
             steps {
                 script {
-                    echo "🧾 Building image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    def imageFull = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    echo "🚀 Building Docker image: ${imageFull}"
+
                     sh """
-                        docker build --pull --no-cache -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} .
-                        docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+                        docker build --pull --no-cache -t ${imageFull} .
+                        docker push ${imageFull}
                     """
 
-                    // Push "latest" only for production
                     if (env.DEPLOY_ENV == "production") {
                         sh """
-                            docker tag ${env.IMAGE_NAME}:${env.IMAGE_TAG} ${env.IMAGE_NAME}:latest
+                            docker tag ${imageFull} ${env.IMAGE_NAME}:latest
                             docker push ${env.IMAGE_NAME}:latest
                         """
-                        echo "✅ Production image also tagged as 'latest'."
+                        echo "✅ Also pushed as latest."
                     }
 
                     sh "docker logout"
-                    echo "✅ Successfully pushed image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                }
-            }
-        }
-
-        stage('⤴️ Rollback (Manual Trigger Only)') {
-            when { expression { return params.ROLLBACK && params.TARGET_VERSION?.trim() } }
-            steps {
-                script {
-                    echo "⚙️ Rollback requested to version: ${params.TARGET_VERSION}"
-                    echo "Skipping build, using existing image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}"
                 }
             }
         }
@@ -199,13 +145,12 @@ pipeline {
             echo """
             ✅ Build & Push Successful!
             ---------------------------
-            🌍 Environment: ${env.DEPLOY_ENV}
             📦 Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
-            🕓 Time: ${new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("UTC"))}
+            🌍 Environment: ${env.DEPLOY_ENV}
             """
         }
         failure {
-            echo "❌ Pipeline failed. Please review the build logs."
+            echo "❌ Build failed. Check logs above."
         }
         always {
             cleanWs()
