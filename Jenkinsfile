@@ -13,7 +13,7 @@ pipeline {
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
 
-        // Dynamic variables
+        // Dynamic variables (initialized empty)
         IMAGE_NAME            = ""
         DEPLOY_ENV            = ""
         TAG_TYPE              = ""
@@ -74,6 +74,7 @@ pipeline {
                             [$class: 'CheckoutOption', timeout: 30]
                         ]
                     ])
+
                     env.ACTUAL_BRANCH = branchName
                 }
             }
@@ -111,31 +112,35 @@ pipeline {
                 script {
                     def commitId  = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                     def timestamp = new Date().format("yyyyMMdd-HHmmss", TimeZone.getTimeZone("UTC"))
+                    def imageTag  = ""
 
                     if (params.ROLLBACK) {
                         if (!params.TARGET_VERSION?.trim()) {
                             error("Rollback requested but TARGET_VERSION is empty.")
                         }
-                        env.IMAGE_TAG = params.TARGET_VERSION.trim()
-                        echo "⤴️ Rollback mode — using tag ${env.IMAGE_TAG}"
+                        imageTag = params.TARGET_VERSION.trim()
+                        echo "⤴️ Rollback mode — using tag ${imageTag}"
 
                     } else if (env.TAG_TYPE == "commit") {
-                        // For staging: use commit + timestamp
-                        env.IMAGE_TAG = "staging-${commitId}-${timestamp}"
-                        echo "🏷️ Using commit-based staging tag: ${env.IMAGE_TAG}"
+                        // Staging: commit + timestamp
+                        imageTag = "staging-${commitId}-${timestamp}"
+                        echo "🏷️ Using commit-based staging tag: ${imageTag}"
 
                     } else {
-                        // For production: use Git tag if exists
+                        // Production: prefer Git tag, fallback to commit + timestamp
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
                         if (!tagName) {
                             echo "⚠️ No Git tag found, using fallback build tag."
-                            env.IMAGE_TAG = "build-${commitId}-${timestamp}"
+                            imageTag = "build-${commitId}-${timestamp}"
                         } else {
-                            env.IMAGE_TAG = tagName
-                            env.PROD_LATEST = "latest"
+                            imageTag = tagName
                         }
-                        echo "🏷️ Final production tag: ${env.IMAGE_TAG}"
+                        echo "🏷️ Final production tag: ${imageTag}"
                     }
+
+                    // ✅ Persist globally
+                    env.IMAGE_TAG = imageTag
+                    echo "✅ Exported IMAGE_TAG globally: ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -156,7 +161,7 @@ pipeline {
             when { expression { return !params.ROLLBACK } }
             steps {
                 script {
-                    echo "🚀 Building Docker image for ${env.DEPLOY_ENV}..."
+                    echo "🧾 Building image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
                     sh """
                         docker build --pull --no-cache -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} .
                         docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
