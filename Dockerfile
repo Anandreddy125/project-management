@@ -19,9 +19,3 @@ RUN apt-get update -y && \
 
 # Copy project files
 COPY . .
-
-# Expose app port (optional)
-EXPOSE 8000
-
-# Default command
-CMD ["bash", "./run.sh"]
