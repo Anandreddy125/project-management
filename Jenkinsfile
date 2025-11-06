@@ -35,7 +35,6 @@ pipeline {
         stage('🔎 Check Trigger Type') {
             steps {
                 script {
-                    // Ignore tag pushes that aren’t for master
                     if (env.GIT_BRANCH?.startsWith("refs/tags/") || env.BRANCH_NAME?.startsWith("refs/tags/")) {
                         def tagRef = env.GIT_BRANCH ?: env.BRANCH_NAME
                         echo "🚫 Tag push detected: ${tagRef}"
@@ -67,8 +66,8 @@ pipeline {
                     checkout([$class: 'GitSCM',
                         branches: [[name: "*/${branchName}"]],
                         userRemoteConfigs: [[
-                            url: "${GIT_REPO}",
-                            credentialsId: "${GIT_CREDENTIALS_ID}"
+                            url: env.GIT_REPO,
+                            credentialsId: env.GIT_CREDENTIALS_ID
                         ]],
                         extensions: [
                             [$class: 'CloneOption', depth: 0, noTags: false, shallow: false],
@@ -118,13 +117,11 @@ pipeline {
                         echo "⤴️ Rollback mode — using tag ${env.IMAGE_TAG}"
 
                     } else if (env.TAG_TYPE == "commit") {
-                        // staging branch: commit-based tagging
                         def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                         env.IMAGE_TAG = "${env.DEPLOY_ENV}-${commitId}"
                         echo "🏷️ Using commit-based tag: ${env.IMAGE_TAG}"
 
                     } else {
-                        // production: prefer git tag, fallback to commit
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
                         if (!tagName) {
                             echo "⚠️ No Git tag found, using commit-based fallback."
@@ -142,7 +139,7 @@ pipeline {
         stage('🔐 Docker Login') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
+                    withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
                         sh """
                             echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin
                         """
@@ -157,11 +154,11 @@ pipeline {
                 script {
                     echo "🚀 Building Docker image for ${env.DEPLOY_ENV}..."
                     sh """
-                        docker build --pull --no-cache -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                        docker build --pull --no-cache -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} .
+                        docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
                         docker logout
                     """
-                    echo "✅ Successfully pushed image: ${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo "✅ Successfully pushed image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
                 }
             }
         }
@@ -171,7 +168,7 @@ pipeline {
             steps {
                 script {
                     echo "⚙️ Rollback requested to version: ${params.TARGET_VERSION}"
-                    echo "Skipping build, using existing image: ${IMAGE_NAME}:${params.TARGET_VERSION}"
+                    echo "Skipping build, using existing image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}"
                 }
             }
         }
