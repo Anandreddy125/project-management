@@ -76,9 +76,9 @@ pipeline {
         stage('🏷️ Generate Docker Tag') {
             steps {
                 script {
-                    def commitId  = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                    def timestamp = new Date().format("yyyyMMdd-HHmmss", TimeZone.getTimeZone("UTC"))
-                    def imageTag  = ""
+                    // ✅ Get exactly 7-character commit hash
+                    def commitId = sh(script: "git rev-parse HEAD | cut -c1-7", returnStdout: true).trim()
+                    def imageTag = ""
 
                     if (params.ROLLBACK) {
                         if (!params.TARGET_VERSION?.trim()) {
@@ -87,14 +87,15 @@ pipeline {
                         imageTag = params.TARGET_VERSION.trim()
 
                     } else if (env.TAG_TYPE == "commit") {
-                        imageTag = "staging-${commitId}-${timestamp}"
+                        // ✅ Staging tag without date/time
+                        imageTag = "staging-${commitId}"
 
                     } else {
+                        // ✅ Production uses Git tag or commit-based fallback
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
-                        imageTag = tagName ?: "build-${commitId}-${timestamp}"
+                        imageTag = tagName ?: "build-${commitId}"
                     }
 
-                    // ✅ Persist globally in Jenkins
                     currentBuild.displayName = "${env.DEPLOY_ENV}-${imageTag}"
                     env.IMAGE_TAG = imageTag
 
