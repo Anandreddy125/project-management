@@ -32,7 +32,7 @@ pipeline {
 
     stages {
 
-        stage('🔎 Check Trigger Type') {
+        stage('🔍 Check Trigger Type') {
             steps {
                 script {
                     if (env.GIT_BRANCH?.startsWith("refs/tags/") || env.BRANCH_NAME?.startsWith("refs/tags/")) {
@@ -109,6 +109,9 @@ pipeline {
         stage('🏷️ Set Image Tag') {
             steps {
                 script {
+                    def commitId  = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    def timestamp = new Date().format("yyyyMMdd-HHmmss", TimeZone.getTimeZone("UTC"))
+
                     if (params.ROLLBACK) {
                         if (!params.TARGET_VERSION?.trim()) {
                             error("Rollback requested but TARGET_VERSION is empty.")
@@ -117,20 +120,21 @@ pipeline {
                         echo "⤴️ Rollback mode — using tag ${env.IMAGE_TAG}"
 
                     } else if (env.TAG_TYPE == "commit") {
-                        def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                        env.IMAGE_TAG = "${env.DEPLOY_ENV}-${commitId}"
-                        echo "🏷️ Using commit-based tag: ${env.IMAGE_TAG}"
+                        // For staging: use commit + timestamp
+                        env.IMAGE_TAG = "staging-${commitId}-${timestamp}"
+                        echo "🏷️ Using commit-based staging tag: ${env.IMAGE_TAG}"
 
                     } else {
+                        // For production: use Git tag if exists
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
                         if (!tagName) {
-                            echo "⚠️ No Git tag found, using commit-based fallback."
-                            def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                            env.IMAGE_TAG = "build-${commitId}"
+                            echo "⚠️ No Git tag found, using fallback build tag."
+                            env.IMAGE_TAG = "build-${commitId}-${timestamp}"
                         } else {
                             env.IMAGE_TAG = tagName
+                            env.PROD_LATEST = "latest"
                         }
-                        echo "🏷️ Final image tag: ${env.IMAGE_TAG}"
+                        echo "🏷️ Final production tag: ${env.IMAGE_TAG}"
                     }
                 }
             }
@@ -156,8 +160,18 @@ pipeline {
                     sh """
                         docker build --pull --no-cache -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} .
                         docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
-                        docker logout
                     """
+
+                    // For production, also push "latest"
+                    if (env.DEPLOY_ENV == "production") {
+                        sh """
+                            docker tag ${env.IMAGE_NAME}:${env.IMAGE_TAG} ${env.IMAGE_NAME}:latest
+                            docker push ${env.IMAGE_NAME}:latest
+                        """
+                        echo "✅ Production image also tagged as 'latest'."
+                    }
+
+                    sh "docker logout"
                     echo "✅ Successfully pushed image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
                 }
             }
@@ -181,6 +195,7 @@ pipeline {
             ---------------------------
             🌍 Environment: ${env.DEPLOY_ENV}
             📦 Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+            🕓 Time: ${new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("UTC"))}
             """
         }
         failure {
