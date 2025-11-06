@@ -137,12 +137,26 @@ pipeline {
                 }
             }
         }
-                stage('🔐 Docker Login') {
+        stage('🔐 Docker Login') {
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
                         sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
                     }
+                }
+            }
+        }
+        stage('🐳 Docker Build & Push') {
+            when { expression { return !params.ROLLBACK } }
+            steps {
+                script {
+                    echo "🚀 Building Docker image for ${env.DEPLOY_ENV}..."
+                    sh """
+                        docker build --pull --no-cache -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                        docker logout
+                    """
+                    echo "✅ Successfully pushed image: ${IMAGE_NAME}:${IMAGE_TAG}"
                 }
             }
         }
