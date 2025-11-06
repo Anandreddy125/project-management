@@ -83,11 +83,11 @@ pipeline {
         stage('Determine Environment') {
             steps {
                 script {
-                    if (env.ACTUAL_BRANCH == "main" || env.ACTUAL_BRANCH == "staging") {
+                    if (env.ACTUAL_BRANCH === "main" || env.ACTUAL_BRANCH === "staging") {
                         env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "anrs125/farhan-testing"
                         env.TAG_TYPE   = "commit"
-                    } else if (env.ACTUAL_BRANCH == "master") {
+                    } else if (env.ACTUAL_BRANCH === "master") {
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE   = "release"
@@ -117,7 +117,7 @@ pipeline {
                         env.IMAGE_TAG = params.TARGET_VERSION.trim()
                         echo "⤴️ Rollback mode — using tag ${env.IMAGE_TAG}"
 
-                    } else if (env.TAG_TYPE == "commit") {
+                    } else if (env.TAG_TYPE === "commit") {
                         def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                         env.IMAGE_TAG = "${env.DEPLOY_ENV}-${commitId}"
                         echo "🏷️ Using commit-based tag: ${env.IMAGE_TAG}"
