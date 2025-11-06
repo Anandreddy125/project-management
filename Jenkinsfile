@@ -17,6 +17,7 @@ pipeline {
         IMAGE_NAME            = ""
         DEPLOY_ENV            = ""
         TAG_TYPE              = ""
+        IMAGE_TAG             = ""
     }
 
     parameters {
@@ -31,34 +32,33 @@ pipeline {
 
     stages {
 
-        stage('Check Trigger Type') {
+        stage('🔎 Check Trigger Type') {
             steps {
                 script {
-                    // Protect pipeline from tag-triggered builds unless it’s a master release
+                    // Ignore tag pushes that aren’t for master
                     if (env.GIT_BRANCH?.startsWith("refs/tags/") || env.BRANCH_NAME?.startsWith("refs/tags/")) {
                         def tagRef = env.GIT_BRANCH ?: env.BRANCH_NAME
                         echo "🚫 Tag push detected: ${tagRef}"
 
-                        // If it's a tag push but not for master, skip the build
                         if (!tagRef.contains("master")) {
-                            echo "⏭️ Skipping non-master tag build."
+                            echo "⏭️ Skipping build for non-master tag push."
                             currentBuild.result = 'SUCCESS'
                             return
                         }
                     }
 
-                    echo "✅ Normal branch push detected — continuing pipeline..."
+                    echo "✅ Normal branch push detected — proceeding with pipeline."
                 }
             }
         }
 
-        stage('Clean Workspace') {
+        stage('🧹 Clean Workspace') {
             steps {
                 cleanWs()
             }
         }
 
-        stage('Checkout Code') {
+        stage('📥 Checkout Code') {
             steps {
                 script {
                     def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
@@ -80,7 +80,7 @@ pipeline {
             }
         }
 
-        stage('Determine Environment') {
+        stage('🌿 Determine Environment') {
             steps {
                 script {
                     if (env.ACTUAL_BRANCH == "main" || env.ACTUAL_BRANCH == "staging") {
@@ -96,7 +96,7 @@ pipeline {
                     }
 
                     echo """
-                    🌿 Environment Details
+                    🌍 Environment Details
                     ---------------------
                     Branch:        ${env.ACTUAL_BRANCH}
                     Environment:   ${env.DEPLOY_ENV}
@@ -107,7 +107,7 @@ pipeline {
             }
         }
 
-        stage('Set Image Tag') {
+        stage('🏷️ Set Image Tag') {
             steps {
                 script {
                     if (params.ROLLBACK) {
@@ -118,15 +118,16 @@ pipeline {
                         echo "⤴️ Rollback mode — using tag ${env.IMAGE_TAG}"
 
                     } else if (env.TAG_TYPE == "commit") {
+                        // staging branch: commit-based tagging
                         def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                         env.IMAGE_TAG = "${env.DEPLOY_ENV}-${commitId}"
                         echo "🏷️ Using commit-based tag: ${env.IMAGE_TAG}"
 
                     } else {
-                        // For production: prefer Git tag if exists
+                        // production: prefer git tag, fallback to commit
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
                         if (!tagName) {
-                            echo "⚠️ No release tag found. Using commit ID instead."
+                            echo "⚠️ No Git tag found, using commit-based fallback."
                             def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                             env.IMAGE_TAG = "build-${commitId}"
                         } else {
@@ -137,15 +138,19 @@ pipeline {
                 }
             }
         }
+
         stage('🔐 Docker Login') {
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
-                        sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
+                        sh """
+                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin
+                        """
                     }
                 }
             }
         }
+
         stage('🐳 Docker Build & Push') {
             when { expression { return !params.ROLLBACK } }
             steps {
@@ -159,6 +164,33 @@ pipeline {
                     echo "✅ Successfully pushed image: ${IMAGE_NAME}:${IMAGE_TAG}"
                 }
             }
+        }
+
+        stage('⤴️ Rollback (Manual Trigger Only)') {
+            when { expression { return params.ROLLBACK && params.TARGET_VERSION?.trim() } }
+            steps {
+                script {
+                    echo "⚙️ Rollback requested to version: ${params.TARGET_VERSION}"
+                    echo "Skipping build, using existing image: ${IMAGE_NAME}:${params.TARGET_VERSION}"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo """
+            ✅ Build & Push Successful!
+            ---------------------------
+            🌍 Environment: ${env.DEPLOY_ENV}
+            📦 Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+            """
+        }
+        failure {
+            echo "❌ Pipeline failed. Please review the build logs."
+        }
+        always {
+            cleanWs()
         }
     }
 }
