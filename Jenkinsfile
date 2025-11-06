@@ -35,6 +35,7 @@ pipeline {
         stage('🔍 Check Trigger Type') {
             steps {
                 script {
+                    // Ignore non-master tag pushes
                     if (env.GIT_BRANCH?.startsWith("refs/tags/") || env.BRANCH_NAME?.startsWith("refs/tags/")) {
                         def tagRef = env.GIT_BRANCH ?: env.BRANCH_NAME
                         echo "🚫 Tag push detected: ${tagRef}"
@@ -127,7 +128,7 @@ pipeline {
                         echo "🏷️ Using commit-based staging tag: ${imageTag}"
 
                     } else {
-                        // Production: prefer Git tag, fallback to commit + timestamp
+                        // Production: use Git tag if available
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
                         if (!tagName) {
                             echo "⚠️ No Git tag found, using fallback build tag."
@@ -167,7 +168,7 @@ pipeline {
                         docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
                     """
 
-                    // For production, also push "latest"
+                    // Push "latest" only for production
                     if (env.DEPLOY_ENV == "production") {
                         sh """
                             docker tag ${env.IMAGE_NAME}:${env.IMAGE_TAG} ${env.IMAGE_NAME}:latest
