@@ -141,18 +141,21 @@ pipeline {
             }
         }
 
-        stage('⏪ Rollback to Previous Version') {
+        stage('Rollback Version') {
             when { expression { return params.ROLLBACK && params.TARGET_VERSION?.trim() } }
             steps {
                 script {
-                    echo "⚙️ Initiating rollback to: ${params.TARGET_VERSION}"
-                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
-                        checkout scm
-                        sh """
-                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}|' deploy.yaml
-                            kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
-                            kubectl rollout status deployment/anrs -n ${env.NAMESPACE}
-                        """
+                    def rollbackVersion = params.TARGET_VERSION.trim()
+                    echo "Rolling back to version: ${rollbackVersion}"
+
+                    dir('kubernetes') {
+                        withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
+                            sh """
+                                sed -i 's|image: ${IMAGE_NAME}:.*|image: ${IMAGE_NAME}:${rollbackVersion}|' deploy.yaml
+                                kubectl apply -f deploy.yaml
+                                kubectl rollout status deployment/anrs-n ${NAMESPACE}
+                            """
+                        }
                     }
                 }
             }
@@ -162,19 +165,20 @@ pipeline {
             when { expression { return !params.ROLLBACK } }
             steps {
                 script {
-                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
-                        echo "🚀 Deploying ${env.IMAGE_NAME}:${env.IMAGE_TAG} to ${env.DEPLOY_ENV} cluster..."
+                    dir('kubernetes') {
+                        withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
+                            echo "Deploying ${IMAGE_NAME}:${BUILD_VERSION} to ${DEPLOY_ENV} cluster..."
 
-                        checkout scm
-                        sh """
-                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' deploy.yaml
-                            kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
-                            kubectl rollout status deployment/anrs -n ${env.NAMESPACE} || {
-                                echo "⚠️ Deployment failed, rolling back..."
-                                kubectl rollout undo deployment/anrs -n ${env.NAMESPACE}
-                                exit 1
-                            }
-                        """
+                            sh """
+                                sed -i 's|image: ${IMAGE_NAME}:.*|image: ${IMAGE_NAME}:${BUILD_VERSION}|' deploy.yaml
+                                kubectl apply -f deploy.yaml
+                                kubectl rollout status deployment/anrs -n ${NAMESPACE} || {
+                                    echo "⚠️ Deployment failed, rolling back..."
+                                    kubectl rollout undo deployment/anrs -n ${NAMESPACE}
+                                    exit 1
+                                }
+                            """
+                        }
                     }
                 }
             }
@@ -183,18 +187,59 @@ pipeline {
 
     post {
         success {
-            echo """
-            ✅ Build & Deploy Successful!
-            ---------------------------------
-              Environment: ${env.DEPLOY_ENV}
-              Image:       ${env.IMAGE_NAME}:${env.IMAGE_TAG}
-              Build:       #${env.BUILD_NUMBER}
-            """
+            script {
+                if (!params.ROLLBACK) {
+                    echo "✅ Saving new stable version: ${BUILD_VERSION}"
+                    sh "echo ${BUILD_VERSION} > ${VERSION_FILE}"
+                    sh "echo ${BUILD_VERSION} >> ${HISTORY_FILE}"
+
+                    slackSend(
+                        channel: '#jenkins-alerts',
+                        color: '#36A64F',
+                        tokenCredentialId: 'slack-token',
+                        message: ":white_check_mark: *Deployment Successful!*\n\n:rocket: *App:* Wafdash\n:earth_asia: *Env:* ${DEPLOY_ENV}\n:link: *Job:* ${env.JOB_NAME} #${env.BUILD_NUMBER}\n:mag: *Build URL:* ${env.BUILD_URL}"
+                    )
+                }
+            }
         }
+
         failure {
-            echo "❌ Build or Deployment Failed! Please check logs."
+            script {
+                echo "🚨 Rolling back to last stable version..."
+                def LAST_SUCCESSFUL_VERSION = "1.0.0"
+                if (fileExists(HISTORY_FILE)) {
+                    def successfulVersions = sh(script: """tac ${HISTORY_FILE} | sed '/^\\\$/d' | sed -n '2p'""", returnStdout: true).trim()
+                    LAST_SUCCESSFUL_VERSION = successfulVersions.replaceAll(/-commit.*/, "") ?: STABLE_VERSION
+                }
+
+                echo "Rolling back to version: ${LAST_SUCCESSFUL_VERSION}"
+                dir('kubernetes') {
+                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
+                        sh """
+                            sed -i 's|image: ${IMAGE_NAME}:.*|image: ${IMAGE_NAME}:${LAST_SUCCESSFUL_VERSION}|' deploy.yaml
+                            kubectl apply -f deploy.yaml
+                        """
+                    }
+                }
+
+                slackSend(
+                    channel: '#jenkins-alerts',
+                    color: '#FF0000',
+                    tokenCredentialId: 'slack-token',
+                    message: ":x: *Deployment Failed!*\n\n:warning: *App:* Wafdash\n:earth_asia: *Env:* ${DEPLOY_ENV}\n:link: *Job:* ${env.JOB_NAME} #${env.BUILD_NUMBER}\n:scroll: *Logs:* ${env.BUILD_URL}"
+                )
+            }
         }
+
         always {
+            echo '🧾 Pipeline completed.'
+            emailext(
+                attachLog: true,
+                subject: "'${currentBuild.result}'",
+                body: "Project: ${env.JOB_NAME}<br/>Build Number: ${env.BUILD_NUMBER}<br/>URL: ${env.BUILD_URL}<br/>",
+                to: 'infra.alerts@prophazecom',
+                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+            )
             cleanWs()
         }
     }
