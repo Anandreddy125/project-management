@@ -147,9 +147,9 @@ pipeline {
                     dir('kubernetes') {
                         withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                             sh """
-                                sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${rollbackVersion}|' deploy.yaml
+                                sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${rollbackVersion}|' deployment.yaml
                                 kubectl apply -f deploy.yaml
-                                kubectl rollout status deployment/anrs -n ${env.NAMESPACE}
+                                kubectl rollout status deployment/anrs -n test
                             """
                         }
                     }
@@ -166,11 +166,11 @@ pipeline {
                             echo "Deploying ${env.IMAGE_NAME}:${env.IMAGE_TAG} to ${env.DEPLOY_ENV} cluster..."
 
                             sh """
-                                sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' deploy.yaml
-                                kubectl apply -f deploy.yaml
-                                kubectl rollout status deployment/anrs -n ${env.NAMESPACE} || {
+                                sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' deployment.yaml
+                                kubectl apply -f deployment.yaml
+                                kubectl rollout status deployment/anrs -n test || {
                                     echo "⚠️ Deployment failed, rolling back..."
-                                    kubectl rollout undo deployment/anrs -n ${env.NAMESPACE}
+                                    kubectl rollout undo deployment/anrs -n test
                                     exit 1
                                 }
                             """
@@ -215,8 +215,8 @@ pipeline {
                 dir('kubernetes') {
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                         sh """
-                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${LAST_SUCCESSFUL_VERSION}|' deploy.yaml
-                            kubectl apply -f deploy.yaml
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${LAST_SUCCESSFUL_VERSION}|' deployment.yaml
+                            kubectl apply -f deployment.yaml 
                         """
                     }
                 }
