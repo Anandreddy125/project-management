@@ -146,9 +146,9 @@ pipeline {
                     echo "⚙️ Initiating rollback to: ${params.TARGET_VERSION}"
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                         sh """
-                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}|' kubetentes/deploy.yaml
-                            kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
-                            kubectl rollout status deployment/reports-api -n ${env.NAMESPACE}
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}|' deploy.yaml
+                            kubectl apply -f deploy.yaml -n 
+                            kubectl rollout status deployment/anrs
                         """
                     }
                 }
@@ -162,11 +162,11 @@ pipeline {
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                         echo "Deploying ${env.IMAGE_NAME}:${env.IMAGE_TAG} to ${env.DEPLOY_ENV} cluster..."
                         sh """
-                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' kubernetes/deploy.yaml
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' deploy.yaml
                             kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
-                            kubectl rollout status deployment/reports-api -n ${env.NAMESPACE} || {
+                            kubectl rollout status deployment/anrs || {
                                 echo "⚠️ Deployment failed, rolling back..."
-                                kubectl rollout undo deployment/reports-api -n ${env.NAMESPACE}
+                                kubectl rollout undo deployment/anrs
                                 exit 1
                             }
                         """
