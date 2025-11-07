@@ -11,7 +11,7 @@ pipeline {
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
-        NAMESPACE             = "default"             // Kubernetes namespace
+        NAMESPACE             = "default"
     }
 
     parameters {
@@ -88,10 +88,8 @@ pipeline {
                             error("Rollback requested but no TARGET_VERSION provided.")
                         }
                         imageTag = params.TARGET_VERSION.trim()
-
                     } else if (env.TAG_TYPE == "commit") {
                         imageTag = "staging-${commitId}"
-
                     } else {
                         def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
                         imageTag = tagName ?: "${commitId}"
@@ -108,9 +106,7 @@ pipeline {
                 script {
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
                         usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
-                        sh """
-                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin
-                        """
+                        sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
                     }
                 }
             }
@@ -133,7 +129,7 @@ pipeline {
                             docker tag ${imageFull} ${env.IMAGE_NAME}:latest
                             docker push ${env.IMAGE_NAME}:latest
                         """
-                        echo "Also pushed as latest."
+                        echo "✅ Also pushed as latest."
                     }
 
                     sh "docker logout"
@@ -151,9 +147,9 @@ pipeline {
                     dir('kubernetes') {
                         withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                             sh """
-                                sed -i 's|image: ${IMAGE_NAME}:.*|image: ${IMAGE_NAME}:${rollbackVersion}|' deploy.yaml
+                                sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${rollbackVersion}|' deploy.yaml
                                 kubectl apply -f deploy.yaml
-                                kubectl rollout status deployment/anrs-n ${NAMESPACE}
+                                kubectl rollout status deployment/anrs -n ${env.NAMESPACE}
                             """
                         }
                     }
@@ -167,14 +163,14 @@ pipeline {
                 script {
                     dir('kubernetes') {
                         withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
-                            echo "Deploying ${IMAGE_NAME}:${BUILD_VERSION} to ${DEPLOY_ENV} cluster..."
+                            echo "Deploying ${env.IMAGE_NAME}:${env.IMAGE_TAG} to ${env.DEPLOY_ENV} cluster..."
 
                             sh """
-                                sed -i 's|image: ${IMAGE_NAME}:.*|image: ${IMAGE_NAME}:${BUILD_VERSION}|' deploy.yaml
+                                sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' deploy.yaml
                                 kubectl apply -f deploy.yaml
-                                kubectl rollout status deployment/anrs -n ${NAMESPACE} || {
+                                kubectl rollout status deployment/anrs -n ${env.NAMESPACE} || {
                                     echo "⚠️ Deployment failed, rolling back..."
-                                    kubectl rollout undo deployment/anrs -n ${NAMESPACE}
+                                    kubectl rollout undo deployment/anrs -n ${env.NAMESPACE}
                                     exit 1
                                 }
                             """
@@ -188,35 +184,38 @@ pipeline {
     post {
         success {
             script {
-                if (!params.ROLLBACK) {
-                    echo "✅ Saving new stable version: ${BUILD_VERSION}"
-                    sh "echo ${BUILD_VERSION} > ${VERSION_FILE}"
-                    sh "echo ${BUILD_VERSION} >> ${HISTORY_FILE}"
+                def VERSION_FILE = "version.txt"
+                def HISTORY_FILE = "history.txt"
 
-                    slackSend(
-                        channel: '#jenkins-alerts',
-                        color: '#36A64F',
-                        tokenCredentialId: 'slack-token',
-                        message: ":white_check_mark: *Deployment Successful!*\n\n:rocket: *App:* Wafdash\n:earth_asia: *Env:* ${DEPLOY_ENV}\n:link: *Job:* ${env.JOB_NAME} #${env.BUILD_NUMBER}\n:mag: *Build URL:* ${env.BUILD_URL}"
-                    )
-                }
+                echo "✅ Saving new stable version: ${env.IMAGE_TAG}"
+                sh "echo ${env.IMAGE_TAG} > ${VERSION_FILE}"
+                sh "echo ${env.IMAGE_TAG} >> ${HISTORY_FILE}"
+
+                slackSend(
+                    channel: '#jenkins-alerts',
+                    color: '#36A64F',
+                    tokenCredentialId: 'slack-token',
+                    message: ":white_check_mark: *Deployment Successful!*\n\n*App:* Project Management\n*Env:* ${env.DEPLOY_ENV}\n*Image:* ${env.IMAGE_NAME}:${env.IMAGE_TAG}\n<${env.BUILD_URL}|View Build>"
+                )
             }
         }
 
         failure {
             script {
-                echo "🚨 Rolling back to last stable version..."
-                def LAST_SUCCESSFUL_VERSION = "1.0.0"
+                def VERSION_FILE = "version.txt"
+                def HISTORY_FILE = "history.txt"
+                def LAST_SUCCESSFUL_VERSION = "latest"
+
                 if (fileExists(HISTORY_FILE)) {
-                    def successfulVersions = sh(script: """tac ${HISTORY_FILE} | sed '/^\\\$/d' | sed -n '2p'""", returnStdout: true).trim()
-                    LAST_SUCCESSFUL_VERSION = successfulVersions.replaceAll(/-commit.*/, "") ?: STABLE_VERSION
+                    def previous = sh(script: "tac ${HISTORY_FILE} | sed -n '2p'", returnStdout: true).trim()
+                    if (previous) { LAST_SUCCESSFUL_VERSION = previous }
                 }
 
-                echo "Rolling back to version: ${LAST_SUCCESSFUL_VERSION}"
+                echo "🚨 Rolling back to last stable version: ${LAST_SUCCESSFUL_VERSION}"
                 dir('kubernetes') {
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                         sh """
-                            sed -i 's|image: ${IMAGE_NAME}:.*|image: ${IMAGE_NAME}:${LAST_SUCCESSFUL_VERSION}|' deploy.yaml
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${LAST_SUCCESSFUL_VERSION}|' deploy.yaml
                             kubectl apply -f deploy.yaml
                         """
                     }
@@ -226,7 +225,7 @@ pipeline {
                     channel: '#jenkins-alerts',
                     color: '#FF0000',
                     tokenCredentialId: 'slack-token',
-                    message: ":x: *Deployment Failed!*\n\n:warning: *App:* Wafdash\n:earth_asia: *Env:* ${DEPLOY_ENV}\n:link: *Job:* ${env.JOB_NAME} #${env.BUILD_NUMBER}\n:scroll: *Logs:* ${env.BUILD_URL}"
+                    message: ":x: *Deployment Failed!*\n\n*App:* Project Management\n*Env:* ${env.DEPLOY_ENV}\n*Rolled back to:* ${LAST_SUCCESSFUL_VERSION}\n<${env.BUILD_URL}|View Logs>"
                 )
             }
         }
@@ -235,10 +234,15 @@ pipeline {
             echo '🧾 Pipeline completed.'
             emailext(
                 attachLog: true,
-                subject: "'${currentBuild.result}'",
-                body: "Project: ${env.JOB_NAME}<br/>Build Number: ${env.BUILD_NUMBER}<br/>URL: ${env.BUILD_URL}<br/>",
-                to: 'infra.alerts@prophazecom',
-                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+                subject: "Jenkins Pipeline - ${currentBuild.result}",
+                body: """
+                    <b>Project:</b> ${env.JOB_NAME}<br/>
+                    <b>Build Number:</b> ${env.BUILD_NUMBER}<br/>
+                    <b>Status:</b> ${currentBuild.result}<br/>
+                    <b>Image:</b> ${env.IMAGE_NAME}:${env.IMAGE_TAG}<br/>
+                    <b>URL:</b> <a href="${env.BUILD_URL}">${env.BUILD_URL}</a>
+                """,
+                to: 'infra.alerts@prophaze.com'
             )
             cleanWs()
         }
