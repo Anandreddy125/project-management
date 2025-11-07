@@ -136,13 +136,56 @@ pipeline {
                 }
             }
         }
+		stage('Rollback (Manual Trigger Only)') {
+            when { expression { return params.ROLLBACK && params.TARGET_VERSION?.trim() } }
+            steps {
+                script {
+                    echo "Rollback requested to version: ${params.TARGET_VERSION}"
+                    echo "Skipping build, using existing image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}"
+                }
+            }
+        }
+        stage('Rollback (Manual Trigger)') {
+            when { expression { return params.ROLLBACK && params.TARGET_VERSION?.trim() } }
+            steps {
+                script {
+                    echo "Rolling back to version: ${params.TARGET_VERSION}"
+                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
+                        sh """
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}|' jenkins/deploy.yaml
+                            kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
+                            kubectl rollout status deployment/reports-api -n ${env.NAMESPACE}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            when { expression { return !params.ROLLBACK } }
+            steps {
+                script {
+                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
+                        echo "Deploying ${env.IMAGE_NAME}:${env.IMAGE_TAG} to ${env.DEPLOY_ENV}"
+                        sh """
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' jenkins/deploy.yaml
+                            kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
+                            kubectl rollout status deployment/reports-api -n ${env.NAMESPACE} || {
+                                echo "Deployment failed, rolling back..."
+                                kubectl rollout undo deployment/reports-api -n ${env.NAMESPACE}
+                                exit 1
+                            }
+                        """
+                    }
+                }
+            }
+        }
     }
 
     post {
         success {
             echo """
              Build & Push Successful!
-            ---------------------------
              Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
              Environment: ${env.DEPLOY_ENV}
              Jenkins Build #: ${env.BUILD_NUMBER}
