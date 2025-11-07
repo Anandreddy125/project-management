@@ -52,11 +52,14 @@ pipeline {
                 script {
                     if (env.ACTUAL_BRANCH == "main" || env.ACTUAL_BRANCH == "staging") {
                         env.DEPLOY_ENV = "staging"
+                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
                         env.IMAGE_NAME = "anrs125/farhan-testing"
                         env.TAG_TYPE   = "commit"
+                         env.NAMESPACE = "reports"
                     } else if (env.ACTUAL_BRANCH == "master") {
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "anrs125/sample-private"
+                        env.KUBERNETES_CREDENTIALS_ID = "reports-production"
                         env.TAG_TYPE   = "release"
                     } else {
                         error("Unsupported branch: ${env.ACTUAL_BRANCH}")
@@ -136,23 +139,14 @@ pipeline {
                 }
             }
         }
-		stage('Rollback (Manual Trigger Only)') {
+        stage('⏪ Rollback to Previous Version') {
             when { expression { return params.ROLLBACK && params.TARGET_VERSION?.trim() } }
             steps {
                 script {
-                    echo "Rollback requested to version: ${params.TARGET_VERSION}"
-                    echo "Skipping build, using existing image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}"
-                }
-            }
-        }
-        stage('Rollback (Manual Trigger)') {
-            when { expression { return params.ROLLBACK && params.TARGET_VERSION?.trim() } }
-            steps {
-                script {
-                    echo "Rolling back to version: ${params.TARGET_VERSION}"
+                    echo "⚙️ Initiating rollback to: ${params.TARGET_VERSION}"
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                         sh """
-                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}|' jenkins/deploy.yaml
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}|' kubetentes/deploy.yaml
                             kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
                             kubectl rollout status deployment/reports-api -n ${env.NAMESPACE}
                         """
@@ -166,12 +160,12 @@ pipeline {
             steps {
                 script {
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
-                        echo "Deploying ${env.IMAGE_NAME}:${env.IMAGE_TAG} to ${env.DEPLOY_ENV}"
+                        echo "Deploying ${env.IMAGE_NAME}:${env.IMAGE_TAG} to ${env.DEPLOY_ENV} cluster..."
                         sh """
-                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' jenkins/deploy.yaml
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' kubernetes/deploy.yaml
                             kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
                             kubectl rollout status deployment/reports-api -n ${env.NAMESPACE} || {
-                                echo "Deployment failed, rolling back..."
+                                echo "⚠️ Deployment failed, rolling back..."
                                 kubectl rollout undo deployment/reports-api -n ${env.NAMESPACE}
                                 exit 1
                             }
@@ -182,18 +176,18 @@ pipeline {
         }
     }
 
-
     post {
         success {
             echo """
-             Build & Push Successful!
-             Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
-             Environment: ${env.DEPLOY_ENV}
-             Jenkins Build #: ${env.BUILD_NUMBER}
+              Build & Deploy Successful!
+            ------------------------------
+                Environment: ${env.DEPLOY_ENV}
+                Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}
+                Build Number: ${env.BUILD_NUMBER}
             """
         }
         failure {
-            echo "Build failed. Check logs above."
+            echo "Build or Deployment Failed! Please check logs."
         }
         always {
             cleanWs()
