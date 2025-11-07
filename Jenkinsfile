@@ -149,7 +149,7 @@ pipeline {
                             sh """
                                 sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${rollbackVersion}|' deployment.yaml
                                 kubectl apply -f deploy.yaml
-                                kubectl rollout status deployment/anrs -n test
+                                kubectl rollout status deployment/test -n test
                             """
                         }
                     }
@@ -168,9 +168,9 @@ pipeline {
                             sh """
                                 sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' deployment.yaml
                                 kubectl apply -f deployment.yaml
-                                kubectl rollout status deployment/anrs -n test || {
+                                kubectl rollout status deployment/test -n test || {
                                     echo "⚠️ Deployment failed, rolling back..."
-                                    kubectl rollout undo deployment/anrs -n test
+                                    kubectl rollout undo deployment/test -n test
                                     exit 1
                                 }
                             """
