@@ -149,7 +149,7 @@ pipeline {
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                         checkout scm
                         sh """
-                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}|' jenkins/deploy.yaml
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${params.TARGET_VERSION}|' deploy.yaml
                             kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
                             kubectl rollout status deployment/anrs -n ${env.NAMESPACE}
                         """
@@ -167,7 +167,7 @@ pipeline {
 
                         checkout scm
                         sh """
-                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' jenkins/deploy.yaml
+                            sed -i 's|image: ${env.IMAGE_NAME}:.*|image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}|' deploy.yaml
                             kubectl apply -f jenkins/deploy.yaml -n ${env.NAMESPACE}
                             kubectl rollout status deployment/anrs -n ${env.NAMESPACE} || {
                                 echo "⚠️ Deployment failed, rolling back..."
