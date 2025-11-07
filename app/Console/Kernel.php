@@ -30,3 +30,6 @@ class Kernel extends ConsoleKernel   vscode dfhdh
         require base_path('routes/console.php');
     }
 }  
+
+
+////////mn mxbv
