@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test
+  namespace: test
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: test
+  template:
+    metadata:
+      labels:
+        app: test
+    spec:
+      containers:
+      - name: test-container
+        image: anrs125/sample-private:1.0.1  # This will be replaced dynamically
+        imagePullPolicy: Always
+      imagePullSecrets:
+      - name: regcred  # Reference the Kubernetes secret

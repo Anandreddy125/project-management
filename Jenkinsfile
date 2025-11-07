@@ -53,13 +53,13 @@ pipeline {
                 script {
                     if (env.ACTUAL_BRANCH == "main" || env.ACTUAL_BRANCH == "staging") {
                         env.DEPLOY_ENV = "staging"
-                        env.KUBERNETES_CREDENTIALS_ID = "testing-k3s"
+            //            env.KUBERNETES_CREDENTIALS_ID = "testing-k3s"
                         env.IMAGE_NAME = "anrs125/farhan-testing"
                         env.TAG_TYPE   = "commit"
                     } else if (env.ACTUAL_BRANCH == "master") {
                         env.DEPLOY_ENV = "production"
                         env.KUBERNETES_CREDENTIALS_ID = "testing-k3s"
-                         env.IMAGE_NAME = "anrs125/farhan-testing"
+                        env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE   = "release"
                     } else {
                         error("Unsupported branch: ${env.ACTUAL_BRANCH}")
