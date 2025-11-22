@@ -1,0 +1,150 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      BRANCH_PARAM:
+        description: "Select branch manually"
+        required: true
+        default: "main"
+        type: choice
+        options:
+          - main
+          - master
+      ROLLBACK:
+        description: "Rollback to TARGET_VERSION"
+        required: true
+        default: "false"
+        type: boolean
+      TARGET_VERSION:
+        description: "Docker tag to rollback"
+        required: false
+        default: ""
+
+env:
+  GIT_REPO: https://github.com/Anandreddy125/project-management.git
+  NAMESPACE: default
+  VERSION_FILE: version.txt
+  HISTORY_FILE: history.txt
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    # --------------------------------------------------------
+    # CLEAN WORKSPACE
+    # --------------------------------------------------------
+    - name: Clean workspace
+      run: rm -rf ./*
+
+    # --------------------------------------------------------
+    # CHECKOUT CODE
+    # --------------------------------------------------------
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        ref: ${{ github.ref }}
+
+    # --------------------------------------------------------
+    # DETERMINE ENVIRONMENT
+    # --------------------------------------------------------
+    - name: Determine environment
+      id: envselect
+      run: |
+        BRANCH="${GITHUB_REF##*/}"
+        echo "Branch detected: $BRANCH"
+
+        if [[ "$BRANCH" == "main" || "$BRANCH" == "staging" ]]; then
+          echo "deploy_env=staging" >> $GITHUB_OUTPUT
+          echo "image_name=anrs125/farhan-testing" >> $GITHUB_OUTPUT
+          echo "tag_type=commit" >> $GITHUB_OUTPUT
+        elif [[ "$BRANCH" == "master" ]]; then
+          echo "deploy_env=production" >> $GITHUB_OUTPUT
+          echo "image_name=anrs125/sample-private" >> $GITHUB_OUTPUT
+          echo "tag_type=release" >> $GITHUB_OUTPUT
+        else
+          echo "Unsupported branch $BRANCH"
+          exit 1
+        fi
+
+    # --------------------------------------------------------
+    # GENERATE IMAGE TAG
+    # --------------------------------------------------------
+    - name: Generate Docker Tag
+    - id: tag
+      run: |
+        COMMIT=$(git rev-parse --short HEAD)
+
+        if [[ "${{ github.event.inputs.ROLLBACK }}" == "true" ]]; then
+           if [[ -z "${{ github.event.inputs.TARGET_VERSION }}" ]]; then
+              echo "Rollback enabled but no target provided"
+              exit 1
+           fi
+           TAG="${{ github.event.inputs.TARGET_VERSION }}"
+        else
+           if [[ "${{ steps.envselect.outputs.tag_type }}" == "commit" ]]; then
+              TAG="staging-${COMMIT}"
+           else
+              TAG=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "$COMMIT")
+           fi
+        fi
+
+        echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
+
+    # --------------------------------------------------------
+    # DOCKER LOGIN
+    # --------------------------------------------------------
+    - name: Docker Login
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    # --------------------------------------------------------
+    # DOCKER BUILD & PUSH
+    # --------------------------------------------------------
+    - name: Build & Push Docker Image
+      if: github.event.inputs.ROLLBACK != 'true'
+      run: |
+        IMAGE="${{ steps.envselect.outputs.image_name }}:${IMAGE_TAG}"
+        echo "Building $IMAGE"
+
+        docker build --pull --no-cache -t $IMAGE .
+        docker push $IMAGE
+
+        # Push latest for production
+        if [[ "${{ steps.envselect.outputs.deploy_env }}" == "production" ]]; then
+           docker tag $IMAGE "${{ steps.envselect.outputs.image_name }}:latest"
+           docker push "${{ steps.envselect.outputs.image_name }}:latest"
+        fi
+
+    - name: Send Slack notification (Success)
+      if: success()
+      uses: slackapi/slack-github-action@v1.24.0
+      with:
+        payload: |
+          {
+            "channel": "#jenkins-alerts",
+            "text": ":white_check_mark: Deployment Successful!\nEnv: ${{ steps.envselect.outputs.deploy_env }}\nImage: ${{ steps.envselect.outputs.image_name }}:${IMAGE_TAG}"
+          }
+      env:
+        SLACK_BOT_TOKEN: ${{ secrets.SLACK_TOKEN }}
+
+    - name: Send Slack notification (Failure)
+      if: failure()
+      uses: slackapi/slack-github-action@v1.24.0
+      with:
+        payload: |
+          {
+            "channel": "#jenkins-alerts",
+            "text": ":x: Deployment Failed!"
+          }
+      env:
+        SLACK_BOT_TOKEN: ${{ secrets.SLACK_TOKEN }}
