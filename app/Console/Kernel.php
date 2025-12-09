@@ -32,4 +32,4 @@ class Kernel extends ConsoleKernel final test for docker build image
         require base_path('routes/console.php');
     }
 }
-//.zdkj,fc;lszkdujc;olwizskudjco;wieklszjdhlkes,thmfnlsk,rxhfvb.d,jxrg v .dskhx,fmnbc d,xjh ncgb/zs,ejgflkjsrdgvkbsxmnfvk,hvdlkr,ghvbjdhfgbvdkxjrgbvdkxjmfhvb dx,
+//.zdkj,fc;lszkdujc;olwizskudjco;wieklszjdhlkes,thmfnlsk,rxhfvb.d,jxrg v .dskhx,fmnbc d,xjh ncgb/zs,ejgflkjsrdgvkbsxmnfvk,hvdlkr,ghvbjdhfgbvdkxjrgbvdkxjmfhvb dx,zjfhdgksejmnrhgksexrjmhfgbekrufvgbselirxjfgbeslirsxkh
