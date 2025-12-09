@@ -41,8 +41,22 @@ pipeline {
                         userRemoteConfigs: [[
                             url: env.GIT_REPO,
                             credentialsId: env.GIT_CREDENTIALS_ID
-                        ]]
+                        ]],
+                        extensions: [
+                            [$class: 'CloneOption', noTags: false, depth: 0, shallow: false],
+                            [$class: 'CheckoutOption', timeout: 30],
+                            [$class: 'CleanBeforeCheckout'],
+                            [$class: 'PruneStaleBranch'],
+                            [$class: 'FetchTags']
+                        ]
                     ])
+
+                    // 🔥 Force fetch ALL latest tags from GitHub (fixes old tag issue)
+                    sh """
+                        git fetch --tags --force
+                        echo "🔍 Available Git Tags:"
+                        git tag -l
+                    """
 
                     env.ACTUAL_BRANCH = branchName
                 }
@@ -63,7 +77,7 @@ pipeline {
                     } else if (env.ACTUAL_BRANCH == "master") {
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "anrs125/farhan-testing"
-                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging1"  // rename later if needed
+                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging1"
                         env.DEPLOYMENT_FILE = "prod-reports.yaml"
                         env.DEPLOYMENT_NAME = "prod-reports-api"
                         env.TAG_TYPE = "release"
@@ -79,7 +93,6 @@ pipeline {
                     Deployment Env:  ${env.DEPLOY_ENV}
                     Docker Repo:     ${env.IMAGE_NAME}
                     Tag Type:        ${env.TAG_TYPE}
-                    Namespace:       ${env.NAMESPACE}
                     Deployment File: ${env.DEPLOYMENT_FILE}
                     """
                 }
