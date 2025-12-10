@@ -8,7 +8,6 @@ pipeline {
     }
 
     environment {
-        SCANNER_HOME          = tool('sonar-scanner')
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
@@ -52,22 +51,20 @@ pipeline {
         stage('Determine Environment') {
             steps {
                 script {
-                    if (env.ACTUAL_BRANCH == "staging") {
+                    if (env.ACTUAL_BRANCH == "staging" || env.ACTUAL_BRANCH == "staging") {
                         env.DEPLOY_ENV = "staging"
-                        env.IMAGE_NAME = "anrs125/sample-private"
-                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging1"
+                        env.IMAGE_NAME = "prophazedocker/staging-report1"
+                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
                         env.DEPLOYMENT_FILE = "staging-report.yaml"
                         env.DEPLOYMENT_NAME = "staging-reports-api"
                         env.TAG_TYPE = "commit"
-
                     } else if (env.ACTUAL_BRANCH == "master") {
                         env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/farhan-testing"
-                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging1"
+                        env.IMAGE_NAME = "prophazedocker/i-report"
+                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging1" // TODO: change credential name BAD NAMING
                         env.DEPLOYMENT_FILE = "prod-reports.yaml"
                         env.DEPLOYMENT_NAME = "prod-reports-api"
                         env.TAG_TYPE = "release"
-
                     } else {
                         error("Unsupported branch: ${env.ACTUAL_BRANCH}")
                     }
@@ -107,22 +104,11 @@ pipeline {
                             error("Rollback requested but no TARGET_VERSION provided.")
                         }
                         imageTag = params.TARGET_VERSION.trim()
-
                     } else if (env.TAG_TYPE == "commit") {
-                        // STAGING builds → staging-<commitId>
                         imageTag = "staging-${commitId}"
-
-                    } else if (env.TAG_TYPE == "release") {
-                        // PRODUCTION builds → extract version from commit message
-                        def commitMsg = sh(script: "git log -1 --pretty=%B", returnStdout: true).trim()
-                        echo "Commit message: ${commitMsg}"
-
-                        def version = commitMsg =~ /(v[0-9]+\.[0-9]+\.[0-9]+)/
-                        if (version) {
-                            imageTag = version[0]
-                        } else {
-                            error("❌ No version found in commit message. Expected format: v1.2.3")
-                        }
+                    } else {
+                        def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
+                        imageTag = tagName ?: "v${commitId}"
                     }
 
                     env.IMAGE_TAG = imageTag
@@ -136,10 +122,7 @@ pipeline {
                 script {
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
                         usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
-
-                        sh """
-                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin
-                        """
+                        sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
                     }
                 }
             }
