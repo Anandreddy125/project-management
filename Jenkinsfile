@@ -14,7 +14,7 @@ pipeline {
     }
 
     triggers {
-        githubPush()   // Trigger on both branch pushes AND tag pushes
+        githubPush()   // supports both branch pushes & tag pushes
     }
 
     parameters {
@@ -24,16 +24,16 @@ pipeline {
 
     stages {
 
-        /* ------------------ CLEAN WORKSPACE ------------------ */
+        /* ---------------- CLEAN ---------------- */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
 
-        /* ------------------ CHECKOUT CODE ------------------ */
+        /* ---------------- CHECKOUT CODE ---------------- */
         stage('Checkout Code') {
             steps {
                 script {
-                    echo "🔹 Checkout supporting branches + tags"
+                    echo "🔹 Checking out code (branches + tags supported)"
 
                     checkout([$class: 'GitSCM',
                         branches: [[name: "**"]],
@@ -52,6 +52,7 @@ pipeline {
                     if (ref.startsWith("refs/heads/")) {
                         env.ACTUAL_BRANCH = ref.replace("refs/heads/", "")
                         echo "✔ Branch detected: ${env.ACTUAL_BRANCH}"
+
                     } else {
                         def tag = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true",
                                      returnStdout: true).trim()
@@ -59,38 +60,32 @@ pipeline {
                         if (tag) {
                             env.GIT_TAG = tag
                             env.ACTUAL_BRANCH = "master"
-                            echo "✔ Tag detected: ${env.GIT_TAG}"
+                            echo "✔ Tag build detected: ${env.GIT_TAG}"
                         }
                     }
                 }
             }
         }
 
-        /* ------------------ DETERMINE ENVIRONMENT ------------------ */
+        /* ---------------- DETERMINE ENVIRONMENT ---------------- */
         stage('Determine Environment') {
             steps {
                 script {
 
                     if (env.ACTUAL_BRANCH == "main") {
-                        /* STAGING */
-                        env.DEPLOY_ENV   = "staging"
-                        env.IMAGE_NAME   = "anrs125/sample-private"
-                        env.TAG_TYPE     = "commit"
-                        env.DEPLOYMENT_FILE = "staging-report.yaml"
-                        env.DEPLOYMENT_NAME = "staging-reports-api"
-                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
+                        /* STAGING (branch push) */
+                        env.DEPLOY_ENV = "staging"
+                        env.IMAGE_NAME = "anrs125/sample-private"
+                        env.TAG_TYPE = "commit"
 
                     } else if (env.ACTUAL_BRANCH == "master" && env.GIT_TAG) {
-                        /* PRODUCTION */
-                        env.DEPLOY_ENV   = "production"
-                        env.IMAGE_NAME   = "prophazedocker/i-report"
-                        env.TAG_TYPE     = "release"
-                        env.DEPLOYMENT_FILE = "prod-reports.yaml"
-                        env.DEPLOYMENT_NAME = "prod-reports-api"
-                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
+                        /* PRODUCTION (must be tag push) */
+                        env.DEPLOY_ENV = "production"
+                        env.IMAGE_NAME = "prophazedocker/i-report"
+                        env.TAG_TYPE = "release"
 
                     } else {
-                        echo "⛔ Unsupported env, skip build."
+                        echo "⛔ Skipping: Not staging or production tag build"
                         currentBuild.result = "NOT_BUILT"
                         return
                     }
@@ -110,13 +105,14 @@ pipeline {
             }
         }
 
+        /* ---------------- TRIVY FS SCAN ---------------- */
         stage('Trivy FS Scan') {
             steps {
                 sh "trivy fs . --severity HIGH,CRITICAL > trivyfs.txt || true"
             }
         }
 
-        /* ------------------ GENERATE DOCKER TAG ------------------ */
+        /* ---------------- GENERATE DOCKER TAG ---------------- */
         stage('Generate Docker Tag') {
             steps {
                 script {
@@ -137,27 +133,31 @@ pipeline {
             }
         }
 
-        /* ------------------ DOCKER BUILD & PUSH ------------------ */
+        /* ---------------- DOCKER LOGIN + BUILD + PUSH ---------------- */
         stage('Docker Build & Push') {
             when { expression { return !params.ROLLBACK } }
             steps {
-                withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
-                                                  usernameVariable: 'DOCKER_USER',
-                                                  passwordVariable: 'DOCKER_PASSWORD')]) {
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: env.DOCKER_CREDENTIALS_ID,
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )]) {
 
-                    sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
+                        sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
 
-                    def img = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                        def img = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
 
-                    sh """
-                        docker build --pull --no-cache -t ${img} .
-                        docker push ${img}
-                    """
+                        sh """
+                            docker build --pull --no-cache -t ${img} .
+                            docker push ${img}
+                        """
+                    }
                 }
             }
         }
 
-        /* ------------------ TRIVY IMAGE SCAN ------------------ */
+        /* ---------------- TRIVY IMAGE SCAN ---------------- */
         stage('Trivy Image Scan') {
             when { expression { return !params.ROLLBACK } }
             steps {
