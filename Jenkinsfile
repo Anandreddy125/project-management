@@ -51,8 +51,8 @@ pipeline {
         stage('Determine Environment') {
             steps {
                 script {
-                    if (env.ACTUAL_BRANCH == "staging" || env.ACTUAL_BRANCH == "staging") {
-                        env.DEPLOY_ENV = "staging"
+                    if (env.ACTUAL_BRANCH == "main" || env.ACTUAL_BRANCH == "main") {
+                        env.DEPLOY_ENV = "main"
                         env.IMAGE_NAME = "anrs125/sample-private"
                         env.KUBERNETES_CREDENTIALS_ID = "reports-staging1"
                         env.DEPLOYMENT_FILE = "staging-report.yaml"
