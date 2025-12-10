@@ -14,26 +14,26 @@ pipeline {
     }
 
     triggers {
-        githubPush()   // supports both branch pushes & tag pushes
+        githubPush()   // triggers on branch push & tag push
     }
 
     parameters {
         booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION?')
-        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Rollback version for PROD only')
+        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Rollback version for production')
     }
 
     stages {
 
-        /* ---------------- CLEAN ---------------- */
+        /* ---------------- CLEAN --------------------- */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
 
-        /* ---------------- CHECKOUT CODE ---------------- */
+        /* ---------------- CHECKOUT --------------------- */
         stage('Checkout Code') {
             steps {
                 script {
-                    echo "🔹 Checking out code (branches + tags supported)"
+                    echo "🔹 Checking out code (supports branches + tags)"
 
                     checkout([$class: 'GitSCM',
                         branches: [[name: "**"]],
@@ -46,7 +46,7 @@ pipeline {
                         ]
                     ])
 
-                    /* Detect branch or tag */
+                    // Detect branch or tag
                     def ref = sh(script: "git symbolic-ref -q HEAD || true", returnStdout: true).trim()
 
                     if (ref.startsWith("refs/heads/")) {
@@ -60,59 +60,59 @@ pipeline {
                         if (tag) {
                             env.GIT_TAG = tag
                             env.ACTUAL_BRANCH = "master"
-                            echo "✔ Tag build detected: ${env.GIT_TAG}"
+                            echo "✔ Tag detected: ${env.GIT_TAG}"
                         }
                     }
                 }
             }
         }
 
-        /* ---------------- DETERMINE ENVIRONMENT ---------------- */
+        /* ---------------- DETERMINE ENV --------------------- */
         stage('Determine Environment') {
             steps {
                 script {
 
                     if (env.ACTUAL_BRANCH == "main") {
-                        /* STAGING (branch push) */
+                        // STAGING ENV
                         env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "anrs125/sample-private"
-                        env.TAG_TYPE = "commit"
+                        env.TAG_TYPE   = "commit"
 
                     } else if (env.ACTUAL_BRANCH == "master" && env.GIT_TAG) {
-                        /* PRODUCTION (must be tag push) */
+                        // PRODUCTION ENV (from tag)
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "anrs125/sample-private"
-                        env.TAG_TYPE = "release"
+                        env.TAG_TYPE   = "release"
 
                     } else {
-                        echo "⛔ Skipping: Not staging or production tag build"
+                        echo "⛔ Not staging or production tag build. Skipping pipeline."
                         currentBuild.result = "NOT_BUILT"
                         return
                     }
 
                     echo """
                     ================================
-                        BUILD CONFIGURATION
+                        BUILD INFO
                     ================================
                     Branch:        ${env.ACTUAL_BRANCH}
                     Environment:   ${env.DEPLOY_ENV}
-                    Docker Repo:   ${env.IMAGE_NAME}
                     Mode:          ${env.TAG_TYPE}
-                    Tag Found:     ${env.GIT_TAG ?: "N/A"}
+                    Tag:           ${env.GIT_TAG ?: "N/A"}
+                    Docker Repo:   ${env.IMAGE_NAME}
                     =================================
                     """
                 }
             }
         }
 
-        /* ---------------- TRIVY FS SCAN ---------------- */
+        /* ---------------- TRIVY FS SCAN --------------------- */
         stage('Trivy FS Scan') {
             steps {
                 sh "trivy fs . --severity HIGH,CRITICAL > trivyfs.txt || true"
             }
         }
 
-        /* ---------------- GENERATE DOCKER TAG ---------------- */
+        /* ---------------- GENERATE TAG --------------------- */
         stage('Generate Docker Tag') {
             steps {
                 script {
@@ -128,7 +128,7 @@ pipeline {
                         env.IMAGE_TAG = env.GIT_TAG
                     }
 
-                    echo "✔ Final Docker Tag: ${env.IMAGE_TAG}"
+                    echo "✔ Final Docker Image Tag → ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -163,8 +163,7 @@ pipeline {
             steps {
                 sh """
                     trivy image ${env.IMAGE_NAME}:${env.IMAGE_TAG} \
-                    --severity HIGH,CRITICAL \
-                    > trivyimage.txt || true
+                    --severity HIGH,CRITICAL > trivyimage.txt || true
                 """
             }
         }
