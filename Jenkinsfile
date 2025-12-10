@@ -20,24 +20,24 @@ pipeline {
     }
 
     triggers {
-        githubPush()   // CI + TAG triggered
+        githubPush()   // Webhook-based trigger (branch + tag)
     }
 
     stages {
 
-        /* --------------------- CLEAN ---------------------- */
+        /* --------------------------- CLEAN ---------------------------- */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
 
-        /* --------------------- CHECKOUT ---------------------- */
+        /* ------------------------ CHECKOUT ---------------------------- */
         stage('Checkout Code') {
             steps {
                 script {
-                    echo "🔹 Checking out code (supports branches + tags)"
+                    echo "🔹 Checking out main / master / tag"
 
                     checkout([$class: 'GitSCM',
-                        branches: [[name: "**"]],  // supports main/master/tags
+                        branches: [[name: "**"]],
                         userRemoteConfigs: [[
                             url: env.GIT_REPO,
                             credentialsId: env.GIT_CREDENTIALS_ID
@@ -47,61 +47,75 @@ pipeline {
                         ]
                     ])
 
-                    env.GIT_REF = sh(script: "git rev-parse --symbolic-full-name HEAD", returnStdout: true).trim()
-                    echo "✔ REF: ${env.GIT_REF}"
+                    /* ---- Detect Branch or Tag ---- */
+                    def ref = sh(script: "git symbolic-ref -q HEAD || true", returnStdout: true).trim()
 
-                    if (env.GIT_REF.startsWith("refs/heads/")) {
-                        env.ACTUAL_BRANCH = env.GIT_REF.replace("refs/heads/", "")
-                    } else if (env.GIT_REF.startsWith("refs/tags/")) {
-                        env.GIT_TAG = env.GIT_REF.replace("refs/tags/", "")
-                        env.ACTUAL_BRANCH = "master"  // Production release only from master tags
+                    if (ref.startsWith("refs/heads/")) {
+
+                        // Normal branch build (main or master)
+                        env.ACTUAL_BRANCH = ref.replace("refs/heads/", "")
+                        echo "✔ Branch detected: ${env.ACTUAL_BRANCH}"
+
+                    } else {
+
+                        // Try to detect tag
+                        def tag = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true",
+                                     returnStdout: true).trim()
+
+                        if (tag) {
+                            env.GIT_TAG = tag
+                            env.ACTUAL_BRANCH = "master"  // Production tags always considered master
+                            echo "✔ Tag detected: ${env.GIT_TAG}"
+
+                        } else {
+                            echo "⛔ Not a valid branch or tag build. Skipping pipeline."
+                            currentBuild.result = "NOT_BUILT"
+                            return
+                        }
                     }
-
-                    echo "✔ Branch Detected: ${env.ACTUAL_BRANCH}"
-                    if (env.GIT_TAG) echo "✔ Tag Detected: ${env.GIT_TAG}"
                 }
             }
         }
 
-        /* --------------------- CHOOSE ENV ---------------------- */
+        /* -------------------- DETERMINE ENVIRONMENT -------------------- */
         stage('Determine Environment') {
             steps {
                 script {
 
                     if (env.ACTUAL_BRANCH == "main") {
-                        /* STAGING ENVIRONMENT */
-                        env.DEPLOY_ENV = "main"
+                        // STAGING
+                        env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE   = "commit"
 
                     } else if (env.GIT_TAG && env.ACTUAL_BRANCH == "master") {
-                        /* PRODUCTION ENVIRONMENT (only tag builds release) */
+                        // PRODUCTION
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE   = "release"
 
                     } else {
-                        echo "⛔ Not staging or a master-tag build. Skipping."
+                        echo "⛔ Not staging or production-tag build. Stopping."
                         currentBuild.result = "NOT_BUILT"
                         return
                     }
 
                     echo """
-                    =============================
-                       DEPLOYMENT CONFIGURATION
-                    =============================
-                    Branch:        ${env.ACTUAL_BRANCH}
-                    Environment:   ${env.DEPLOY_ENV}
-                    Docker Repo:   ${env.IMAGE_NAME}
-                    Mode:          ${env.TAG_TYPE}
-                    Tag:           ${env.GIT_TAG ?: 'N/A'}
-                    =============================
+                    ===============================
+                     DEPLOYMENT CONFIGURATION
+                    ===============================
+                    Git Branch:        ${env.ACTUAL_BRANCH}
+                    Git Tag:           ${env.GIT_TAG ?: "N/A"}
+                    Deployment Env:    ${env.DEPLOY_ENV}
+                    Docker Image Repo: ${env.IMAGE_NAME}
+                    Tag Mode:          ${env.TAG_TYPE}
+                    ===============================
                     """
                 }
             }
         }
 
-        /* --------------------- TRIVY FS ---------------------- */
+        /* ------------------- TRIVY SCAN (FILESYSTEM) ------------------- */
         stage('Trivy Filesystem Scan') {
             when { expression { return env.DEPLOY_ENV != null } }
             steps {
@@ -114,26 +128,27 @@ pipeline {
             when { expression { return env.DEPLOY_ENV != null } }
             steps {
                 script {
+
                     def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
 
                     if (params.ROLLBACK) {
                         env.IMAGE_TAG = params.TARGET_VERSION.trim()
 
                     } else if (env.TAG_TYPE == "commit") {
-                        /* STAGING TAG */
+                        /* Staging */
                         env.IMAGE_TAG = "staging-${commitId}"
 
                     } else if (env.TAG_TYPE == "release") {
-                        /* PRODUCTION TAG = EXACT GIT TAG */
+                        /* Production */
                         env.IMAGE_TAG = env.GIT_TAG
                     }
 
-                    echo "✔ Final Docker Tag: ${env.IMAGE_TAG}"
+                    echo "✔ Final Docker Image Tag → ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        /* --------------------- DOCKER LOGIN ---------------------- */
+        /* ------------------------- DOCKER LOGIN ------------------------- */
         stage('Docker Login') {
             when { expression { return env.DEPLOY_ENV != null } }
             steps {
@@ -147,7 +162,7 @@ pipeline {
             }
         }
 
-        /* --------------------- DOCKER BUILD & PUSH ---------------------- */
+        /* ---------------------- DOCKER BUILD & PUSH --------------------- */
         stage('Docker Build & Push') {
             when { expression { return env.DEPLOY_ENV != null && !params.ROLLBACK } }
             steps {
@@ -162,7 +177,7 @@ pipeline {
             }
         }
 
-        /* --------------------- IMAGE SCAN ---------------------- */
+        /* ------------------------ IMAGE TRIVY SCAN ----------------------- */
         stage('Trivy Image Scan') {
             when { expression { return env.DEPLOY_ENV != null && !params.ROLLBACK } }
             steps {
