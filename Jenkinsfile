@@ -14,21 +14,26 @@ pipeline {
     }
 
     triggers {
-        githubPush()
+        githubPush()   // Trigger on both branch pushes AND tag pushes
+    }
+
+    parameters {
+        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION?')
+        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Rollback version for PROD only')
     }
 
     stages {
 
-        /* CLEAN */
+        /* ------------------ CLEAN WORKSPACE ------------------ */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
 
-        /* CHECKOUT (supports main, master, tags) */
+        /* ------------------ CHECKOUT CODE ------------------ */
         stage('Checkout Code') {
             steps {
                 script {
-                    echo "🔹 Checking out branches + tags..."
+                    echo "🔹 Checkout supporting branches + tags"
 
                     checkout([$class: 'GitSCM',
                         branches: [[name: "**"]],
@@ -37,80 +42,82 @@ pipeline {
                             credentialsId: env.GIT_CREDENTIALS_ID
                         ]],
                         extensions: [
-                            [$class: 'CloneOption', shallow: false, noTags: false]
+                            [$class: "CloneOption", shallow: false, noTags: false]
                         ]
                     ])
 
                     /* Detect branch or tag */
-                    def branchRef = sh(script: "git symbolic-ref -q HEAD || true", returnStdout: true).trim()
-                    def tagRef    = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true",
-                                       returnStdout: true).trim()
+                    def ref = sh(script: "git symbolic-ref -q HEAD || true", returnStdout: true).trim()
 
-                    if (branchRef.startsWith("refs/heads/")) {
-                        env.ACTUAL_BRANCH = branchRef.replace("refs/heads/", "")
-                        env.GIT_TAG = ""
+                    if (ref.startsWith("refs/heads/")) {
+                        env.ACTUAL_BRANCH = ref.replace("refs/heads/", "")
                         echo "✔ Branch detected: ${env.ACTUAL_BRANCH}"
-
-                    } else if (tagRef) {
-                        env.GIT_TAG = tagRef
-                        env.ACTUAL_BRANCH = "master"  // production tags only
-                        echo "✔ Tag detected: ${env.GIT_TAG}"
-
                     } else {
-                        echo "⛔ Not a valid branch or tag build. Stopping."
-                        currentBuild.result = "NOT_BUILT"
-                        return
+                        def tag = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true",
+                                     returnStdout: true).trim()
+
+                        if (tag) {
+                            env.GIT_TAG = tag
+                            env.ACTUAL_BRANCH = "master"
+                            echo "✔ Tag detected: ${env.GIT_TAG}"
+                        }
                     }
                 }
             }
         }
 
-        /* DETERMINE ENVIRONMENT */
+        /* ------------------ DETERMINE ENVIRONMENT ------------------ */
         stage('Determine Environment') {
             steps {
                 script {
-                    if (env.ACTUAL_BRANCH == "main") {
-                        /* STAGING BUILD */
-                        env.DEPLOY_ENV = "staging"
-                        env.IMAGE_NAME = "anrs125/farhan-testing"
-                        env.TAG_TYPE   = "commit"
 
-                    } else if (env.GIT_TAG) {
-                        /* PRODUCTION TAG BUILD */
-                        env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/sample-private"
-                        env.TAG_TYPE   = "release"
+                    if (env.ACTUAL_BRANCH == "main") {
+                        /* STAGING */
+                        env.DEPLOY_ENV   = "staging"
+                        env.IMAGE_NAME   = "prophazedocker/staging-report"
+                        env.TAG_TYPE     = "commit"
+                        env.DEPLOYMENT_FILE = "staging-report.yaml"
+                        env.DEPLOYMENT_NAME = "staging-reports-api"
+                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
+
+                    } else if (env.ACTUAL_BRANCH == "master" && env.GIT_TAG) {
+                        /* PRODUCTION */
+                        env.DEPLOY_ENV   = "production"
+                        env.IMAGE_NAME   = "prophazedocker/i-report"
+                        env.TAG_TYPE     = "release"
+                        env.DEPLOYMENT_FILE = "prod-reports.yaml"
+                        env.DEPLOYMENT_NAME = "prod-reports-api"
+                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
 
                     } else {
-                        echo "⛔ Skipping — not staging or production-tag build."
+                        echo "⛔ Unsupported env, skip build."
                         currentBuild.result = "NOT_BUILT"
                         return
                     }
 
                     echo """
-                    ========== BUILD CONFIG ==========
-                    Branch:     ${env.ACTUAL_BRANCH}
-                    Tag:        ${env.GIT_TAG ?: 'none'}
-                    Env:        ${env.DEPLOY_ENV}
-                    Repo:       ${env.IMAGE_NAME}
-                    Tag Type:   ${env.TAG_TYPE}
+                    ================================
+                        BUILD CONFIGURATION
+                    ================================
+                    Branch:        ${env.ACTUAL_BRANCH}
+                    Environment:   ${env.DEPLOY_ENV}
+                    Docker Repo:   ${env.IMAGE_NAME}
+                    Mode:          ${env.TAG_TYPE}
+                    Tag Found:     ${env.GIT_TAG ?: "N/A"}
                     =================================
                     """
                 }
             }
         }
 
-        /* TRIVY FS SCAN */
-        stage('Trivy Filesystem Scan') {
-            when { expression { return env.DEPLOY_ENV != null } }
+        stage('Trivy FS Scan') {
             steps {
                 sh "trivy fs . --severity HIGH,CRITICAL > trivyfs.txt || true"
             }
         }
 
-        /* GENERATE DOCKER TAG */
+        /* ------------------ GENERATE DOCKER TAG ------------------ */
         stage('Generate Docker Tag') {
-            when { expression { return env.DEPLOY_ENV != null } }
             steps {
                 script {
                     def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
@@ -125,47 +132,39 @@ pipeline {
                         env.IMAGE_TAG = env.GIT_TAG
                     }
 
-                    echo "✔ Final Docker Image Tag: ${env.IMAGE_TAG}"
+                    echo "✔ Final Docker Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        /* DOCKER LOGIN */
-        stage('Docker Login') {
-            when { expression { return env.DEPLOY_ENV != null } }
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: env.DOCKER_CREDENTIALS_ID,
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASSWORD'
-                )]) {
-                    sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
-                }
-            }
-        }
-
-        /* DOCKER BUILD & PUSH */
+        /* ------------------ DOCKER BUILD & PUSH ------------------ */
         stage('Docker Build & Push') {
-            when { expression { return env.DEPLOY_ENV != null && !params.ROLLBACK } }
+            when { expression { return !params.ROLLBACK } }
             steps {
-                script {
+                withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
+                                                  usernameVariable: 'DOCKER_USER',
+                                                  passwordVariable: 'DOCKER_PASSWORD')]) {
+
+                    sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
+
                     def img = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
 
                     sh """
-                        docker build --no-cache -t ${img} .
+                        docker build --pull --no-cache -t ${img} .
                         docker push ${img}
                     """
                 }
             }
         }
 
-        /* DOCKER TRIVY SCAN */
+        /* ------------------ TRIVY IMAGE SCAN ------------------ */
         stage('Trivy Image Scan') {
-            when { expression { return env.DEPLOY_ENV != null && !params.ROLLBACK } }
+            when { expression { return !params.ROLLBACK } }
             steps {
                 sh """
                     trivy image ${env.IMAGE_NAME}:${env.IMAGE_TAG} \
-                    --severity HIGH,CRITICAL > trivyimage.txt || true
+                    --severity HIGH,CRITICAL \
+                    > trivyimage.txt || true
                 """
             }
         }
