@@ -14,7 +14,7 @@ pipeline {
     }
 
     triggers {
-        githubPush()   // triggers on branch push & tag push
+        githubPush()
     }
 
     parameters {
@@ -24,95 +24,80 @@ pipeline {
 
     stages {
 
-        /* ---------------- CLEAN --------------------- */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
 
-        /* ---------------- CHECKOUT --------------------- */
+        /* ------------------- CHECKOUT ------------------- */
         stage('Checkout Code') {
             steps {
                 script {
-                    echo "🔹 Checking out code (supports branches + tags)"
-
                     checkout([$class: 'GitSCM',
                         branches: [[name: "**"]],
                         userRemoteConfigs: [[
                             url: env.GIT_REPO,
                             credentialsId: env.GIT_CREDENTIALS_ID
-                        ]],
-                        extensions: [
-                            [$class: "CloneOption", shallow: false, noTags: false]
-                        ]
+                        ]]
                     ])
 
-                    // Detect branch or tag
-                    def ref = sh(script: "git symbolic-ref -q HEAD || true", returnStdout: true).trim()
+                    // Detect branch properly
+                    env.ACTUAL_BRANCH = sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
 
-                    if (ref.startsWith("refs/heads/")) {
-                        env.ACTUAL_BRANCH = ref.replace("refs/heads/", "")
-                        echo "✔ Branch detected: ${env.ACTUAL_BRANCH}"
+                    // Detect tag properly
+                    env.GIT_TAG = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
 
-                    } else {
-                        def tag = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true",
-                                     returnStdout: true).trim()
-
-                        if (tag) {
-                            env.GIT_TAG = tag
-                            env.ACTUAL_BRANCH = "master"
-                            echo "✔ Tag detected: ${env.GIT_TAG}"
-                        }
-                    }
+                    echo "✔ Detected branch: ${env.ACTUAL_BRANCH}"
+                    echo "✔ Detected tag: ${env.GIT_TAG}"
                 }
             }
         }
 
-        /* ---------------- DETERMINE ENV --------------------- */
+        /* ------------------- SELECT ENV ------------------- */
         stage('Determine Environment') {
             steps {
                 script {
 
                     if (env.ACTUAL_BRANCH == "main") {
-                        // STAGING ENV
+                        // STAGING ENVIRONMENT
                         env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE   = "commit"
 
                     } else if (env.ACTUAL_BRANCH == "master" && env.GIT_TAG) {
-                        // PRODUCTION ENV (from tag)
+                        // PRODUCTION ENVIRONMENT
                         env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/sample-private"
+                        env.IMAGE_NAME = "prophazedocker/i-report"
                         env.TAG_TYPE   = "release"
 
                     } else {
-                        echo "⛔ Not staging or production tag build. Skipping pipeline."
+                        echo "⛔ Invalid event. Only main(branch) or master(tag) builds allowed."
                         currentBuild.result = "NOT_BUILT"
                         return
                     }
 
                     echo """
-                    ================================
-                        BUILD INFO
-                    ================================
-                    Branch:        ${env.ACTUAL_BRANCH}
-                    Environment:   ${env.DEPLOY_ENV}
-                    Mode:          ${env.TAG_TYPE}
-                    Tag:           ${env.GIT_TAG ?: "N/A"}
-                    Docker Repo:   ${env.IMAGE_NAME}
-                    =================================
+                    =======================
+                     BUILD CONFIGURATION
+                    =======================
+                    Branch:       ${env.ACTUAL_BRANCH}
+                    Tag:          ${env.GIT_TAG ?: 'NO TAG'}
+                    Build Env:    ${env.DEPLOY_ENV}
+                    Image Name:   ${env.IMAGE_NAME}
+                    Tag Mode:     ${env.TAG_TYPE}
+                    =======================
                     """
                 }
             }
         }
 
-        /* ---------------- TRIVY FS SCAN --------------------- */
+        /* ------------------- TRIVY FS SCAN ------------------- */
         stage('Trivy FS Scan') {
             steps {
                 sh "trivy fs . --severity HIGH,CRITICAL > trivyfs.txt || true"
             }
         }
 
-        /* ---------------- GENERATE TAG --------------------- */
+        /* ------------------- GENERATE DOCKER TAG ------------------- */
         stage('Generate Docker Tag') {
             steps {
                 script {
@@ -128,12 +113,12 @@ pipeline {
                         env.IMAGE_TAG = env.GIT_TAG
                     }
 
-                    echo "✔ Final Docker Image Tag → ${env.IMAGE_TAG}"
+                    echo "✔ Final Docker Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        /* ---------------- DOCKER LOGIN + BUILD + PUSH ---------------- */
+        /* ------------------- DOCKER BUILD + PUSH ------------------- */
         stage('Docker Build & Push') {
             when { expression { return !params.ROLLBACK } }
             steps {
@@ -157,13 +142,13 @@ pipeline {
             }
         }
 
-        /* ---------------- TRIVY IMAGE SCAN ---------------- */
+        /* ------------------- TRIVY IMAGE SCAN ------------------- */
         stage('Trivy Image Scan') {
             when { expression { return !params.ROLLBACK } }
             steps {
                 sh """
                     trivy image ${env.IMAGE_NAME}:${env.IMAGE_TAG} \
-                    --severity HIGH,CRITICAL > trivyimage.txt || true
+                        --severity HIGH,CRITICAL > trivyimage.txt || true
                 """
             }
         }
