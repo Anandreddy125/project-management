@@ -70,7 +70,7 @@ pipeline {
 
                     if (env.ACTUAL_BRANCH == "main") {
                         /* STAGING ENVIRONMENT */
-                        env.DEPLOY_ENV = "staging"
+                        env.DEPLOY_ENV = "main"
                         env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE   = "commit"
 
