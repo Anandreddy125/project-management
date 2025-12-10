@@ -57,8 +57,8 @@ pipeline {
         stage('Determine Environment') {
             steps {
                 script {
-                    if (env.ACTUAL_BRANCH == "staging") {
-                        env.DEPLOY_ENV = "staging"
+                    if (env.ACTUAL_BRANCH == "main") {
+                        env.DEPLOY_ENV = "main"
                         env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE   = "commit"
 
