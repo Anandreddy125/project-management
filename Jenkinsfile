@@ -81,7 +81,7 @@ pipeline {
                     } else if (env.ACTUAL_BRANCH == "master" && env.GIT_TAG) {
                         /* PRODUCTION (must be tag push) */
                         env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "prophazedocker/i-report"
+                        env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE = "release"
 
                     } else {
