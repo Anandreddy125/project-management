@@ -74,7 +74,7 @@ pipeline {
                     if (env.ACTUAL_BRANCH == "main") {
                         /* STAGING */
                         env.DEPLOY_ENV   = "staging"
-                        env.IMAGE_NAME   = "prophazedocker/staging-report"
+                        env.IMAGE_NAME   = "anrs125/sample-private"
                         env.TAG_TYPE     = "commit"
                         env.DEPLOYMENT_FILE = "staging-report.yaml"
                         env.DEPLOYMENT_NAME = "staging-reports-api"
