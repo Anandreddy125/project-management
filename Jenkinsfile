@@ -40,7 +40,11 @@ pipeline {
                         userRemoteConfigs: [[
                             url: env.GIT_REPO,
                             credentialsId: env.GIT_CREDENTIALS_ID
-                        ]]
+                        ]],
+                        extensions: [
+                            [$class: 'CloneOption', shallow: false, noTags: false],   // <-- IMPORTANT
+                            [$class: 'CheckoutOption']
+                        ]
                     ])
 
                     env.ACTUAL_BRANCH = branchName
@@ -51,33 +55,27 @@ pipeline {
         stage('Determine Environment') {
             steps {
                 script {
-                    if (env.ACTUAL_BRANCH == "staging" || env.ACTUAL_BRANCH == "staging") {
+                    if (env.ACTUAL_BRANCH == "staging") {
                         env.DEPLOY_ENV = "staging"
-                        env.IMAGE_NAME = "prophazedocker/staging-report1"
-                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
-                        env.DEPLOYMENT_FILE = "staging-report.yaml"
-                        env.DEPLOYMENT_NAME = "staging-reports-api"
+                        env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE = "commit"
+
                     } else if (env.ACTUAL_BRANCH == "master") {
                         env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "prophazedocker/i-report"
-                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging1" // TODO: change credential name BAD NAMING
-                        env.DEPLOYMENT_FILE = "prod-reports.yaml"
-                        env.DEPLOYMENT_NAME = "prod-reports-api"
+                        env.IMAGE_NAME = "anrs125/sample-private"
                         env.TAG_TYPE = "release"
+
                     } else {
                         error("Unsupported branch: ${env.ACTUAL_BRANCH}")
                     }
 
                     echo """
-                    Environment Info
-                    ----------------------
+                    Environment Info:
+                    -----------------------
                     Branch: ${env.ACTUAL_BRANCH}
-                    Deploy: ${env.DEPLOY_ENV}
-                    Repo:   ${env.IMAGE_NAME}
-                    Mode:   ${env.TAG_TYPE}
-                    Namespace: ${env.NAMESPACE}
-                    Deployment File: ${env.DEPLOYMENT_FILE}
+                    Deploy Env: ${env.DEPLOY_ENV}
+                    Repo: ${env.IMAGE_NAME}
+                    Tag Mode: ${env.TAG_TYPE}
                     """
                 }
             }
@@ -88,7 +86,6 @@ pipeline {
                 script {
                     echo "Running Trivy filesystem scan..."
                     sh "trivy fs . --severity HIGH,CRITICAL > trivyfs.txt || true"
-                    echo "Filesystem scan completed — saved in trivyfs.txt"
                 }
             }
         }
@@ -96,23 +93,36 @@ pipeline {
         stage('Generate Docker Tag') {
             steps {
                 script {
-                    def commitId = sh(script: "git rev-parse HEAD | cut -c1-7", returnStdout: true).trim()
+                    def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                     def imageTag = ""
 
                     if (params.ROLLBACK) {
                         if (!params.TARGET_VERSION?.trim()) {
-                            error("Rollback requested but no TARGET_VERSION provided.")
+                            error("Rollback requires TARGET_VERSION.")
                         }
                         imageTag = params.TARGET_VERSION.trim()
+
                     } else if (env.TAG_TYPE == "commit") {
+                        // STAGING → staging-commitID
                         imageTag = "staging-${commitId}"
-                    } else {
-                        def tagName = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || true", returnStdout: true).trim()
-                        imageTag = tagName ?: "v${commitId}"
+
+                    } else if (env.TAG_TYPE == "release") {
+                        // PRODUCTION → MUST use Git Tag
+                        def gitTag = sh(
+                            script: "git name-rev --name-only --tags HEAD | sed 's/\\^.*//'",
+                            returnStdout: true
+                        ).trim()
+
+                        if (gitTag && gitTag != "undefined") {
+                            echo "✔ Git Tag detected: ${gitTag}"
+                            imageTag = gitTag
+                        } else {
+                            error("❌ No Git Tag found on master commit. Create tag using: git tag v1.0.0 && git push origin v1.0.0")
+                        }
                     }
 
                     env.IMAGE_TAG = imageTag
-                    echo "Final Docker Image Tag: ${env.IMAGE_TAG}"
+                    echo "✔ Final Docker Image Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -122,7 +132,10 @@ pipeline {
                 script {
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
                         usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
-                        sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
+
+                        sh """
+                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin
+                        """
                     }
                 }
             }
@@ -147,12 +160,9 @@ pipeline {
             when { expression { return !params.ROLLBACK } }
             steps {
                 script {
-                    echo "Running Trivy image scan..."
                     sh """
-                        docker pull ${env.IMAGE_NAME}:${env.IMAGE_TAG} || true
                         trivy image ${env.IMAGE_NAME}:${env.IMAGE_TAG} --severity HIGH,CRITICAL > trivyimage.txt || true
                     """
-                    echo "Image scan completed — results saved in trivyimage.txt"
                 }
             }
         }
