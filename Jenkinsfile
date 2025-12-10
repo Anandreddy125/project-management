@@ -59,7 +59,7 @@ pipeline {
                 script {
                     if (env.ACTUAL_BRANCH == "main") {
                         env.DEPLOY_ENV = "main"
-                        env.IMAGE_NAME = "anrs125/sample-private"
+                        env.IMAGE_NAME = "anrs125/farhan-testing"
                         env.KUBERNETES_CREDENTIALS_ID = "reports-staging1"
                         env.DEPLOYMENT_FILE = "staging-report.yaml"
                         env.DEPLOYMENT_NAME = "staging-reports-api"
