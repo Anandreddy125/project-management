@@ -57,10 +57,13 @@ pipeline {
         stage('Determine Environment') {
             steps {
                 script {
-                    if (env.ACTUAL_BRANCH == "staging") {
-                        env.DEPLOY_ENV = "staging"
+                    if (env.ACTUAL_BRANCH == "main") {
+                        env.DEPLOY_ENV = "main"
                         env.IMAGE_NAME = "anrs125/sample-private"
-                        env.TAG_TYPE   = "commit"
+                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging1"
+                        env.DEPLOYMENT_FILE = "staging-report.yaml"
+                        env.DEPLOYMENT_NAME = "staging-reports-api"
+                        env.TAG_TYPE = "commit"
 
                     } else {
                         // DEFAULT: TAG = PRODUCTION
@@ -95,6 +98,18 @@ pipeline {
                 script {
                     def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                     def imageTag = ""
+					
+                    if (params.ROLLBACK) {
+                        if (!params.TARGET_VERSION?.trim()) {
+                            error("Rollback requested but no TARGET_VERSION provided.")
+                        }
+                        imageTag = params.TARGET_VERSION.trim()
+
+                    } else if (env.TAG_TYPE == "commit") {
+                        // STAGING builds → staging-<commitId>
+                        imageTag = "staging-${commitId}"
+
+                    }					
 
                     if (params.ROLLBACK) {
                         if (!params.TARGET_VERSION.trim()) {
