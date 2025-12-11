@@ -11,13 +11,13 @@ pipeline {
         SCANNER_HOME          = tool('sonar-scanner')
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
-        DOCKER_CREDENTIALS_ID = "anand-dockerhub" 
+        DOCKER_CREDENTIALS_ID = "anand-dockerhub"
         SONARQUBE_ENV         = "sonar-server"
         NAMESPACE             = "reports"
     }
 
     parameters {
-        choice(name: 'BRANCH_PARAM', choices: ['staging', 'master'], description: 'Select branch for manual build')
+        choice(name: 'BRANCH_PARAM', choices: ['staging', 'main', 'master'], description: 'Select branch for manual build')
         booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION')
         string(name: 'TARGET_VERSION', defaultValue: '', description: 'Docker tag for rollback')
     }
@@ -35,6 +35,8 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 script {
+                    // If webhook triggered → BRANCH_NAME exists.
+                    // If manual build → use BRANCH_PARAM.
                     def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
 
                     echo "🔹 Checking out branch: ${branchName}"
@@ -56,6 +58,7 @@ pipeline {
         stage('Determine Environment') {
             steps {
                 script {
+
                     if (env.ACTUAL_BRANCH == "staging") {
                         env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "panrs125/sample-private"
@@ -63,15 +66,17 @@ pipeline {
                         env.DEPLOYMENT_FILE = "staging-report.yaml"
                         env.DEPLOYMENT_NAME = "staging-reports-api"
                         env.TAG_TYPE = "commit"
-                    } 
-                    else if (env.ACTUAL_BRANCH == "master") {
+                    }
+
+                    else if (env.ACTUAL_BRANCH == "master" || env.ACTUAL_BRANCH == "main") {
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "panrs125/sample-private1"
                         env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging1"
                         env.DEPLOYMENT_FILE = "prod-reports.yaml"
                         env.DEPLOYMENT_NAME = "prod-reports-api"
                         env.TAG_TYPE = "release"
-                    } 
+                    }
+
                     else {
                         error("Unsupported branch: ${env.ACTUAL_BRANCH}")
                     }
@@ -105,17 +110,21 @@ pipeline {
                     def imageTag
 
                     if (params.ROLLBACK) {
+
                         if (!params.TARGET_VERSION.trim()) {
                             error("Rollback requires TARGET_VERSION")
                         }
+
                         imageTag = params.TARGET_VERSION.trim()
                     }
+
                     else if (env.TAG_TYPE == "commit") {
                         imageTag = "staging-${commitId}"
                     }
+
                     else if (env.TAG_TYPE == "release") {
 
-                        // Get Git tag — production MUST have a tag
+                        // Production build MUST have a Git Tag
                         def tagName = sh(
                             script: "git describe --tags --exact-match 2>/dev/null || true",
                             returnStdout: true
@@ -123,7 +132,7 @@ pipeline {
 
                         if (!tagName) {
                             error("""
-                            ❌ Production build requires Git tag.
+                            ❌ Production build requires a Git tag.
                             Example:
                                 git tag v2.0.6
                                 git push origin v2.0.6
