@@ -1,6 +1,23 @@
 pipeline {
     agent any
 
+    /* 
+     * Prevent Jenkins from running on unwanted branches.
+     * This pipeline only runs when:
+     *   ✔ a push happens in "staging"
+     *   ✔ a TAG is pushed (v1.0.0 etc.)
+     */
+    triggers {
+        githubPush()
+    }
+
+    when {
+        anyOf {
+            branch 'staging'
+            buildingTag()    // Production ONLY when tag exists
+        }
+    }
+
     options {
         disableConcurrentBuilds()
         timestamps()
@@ -15,13 +32,8 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'BUILD_TYPE', choices: ['AUTO', 'STAGING', 'PRODUCTION'], description: 'AUTO = detect from branch')
         booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION')
         string(name: 'TARGET_VERSION', defaultValue: '', description: 'Rollback version')
-    }
-
-    triggers {
-        githubPush()
     }
 
     stages {
@@ -33,29 +45,22 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 script {
-                    def branchName = env.BRANCH_NAME ?: "staging"
-
-                    echo "🔹 Detected Branch: ${branchName}"
-
                     checkout scm
-                    env.ACTUAL_BRANCH = branchName
 
-                    // Detect Git tag on this commit
+                    // Detect branch
+                    env.ACTUAL_BRANCH = sh(
+                        script: "git rev-parse --abbrev-ref HEAD",
+                        returnStdout: true
+                    ).trim()
+
+                    // Detect Git tag for production
                     env.GIT_TAG = sh(
                         script: "git describe --tags --exact-match HEAD 2>/dev/null || echo ''",
                         returnStdout: true
                     ).trim()
 
-                    echo "🔹 Detected Git Tag: ${env.GIT_TAG ?: 'NO TAG'}"
-
-                    // BUILD TYPE AUTO LOGIC
-                    if (params.BUILD_TYPE == "AUTO") {
-                        env.BUILD_TYPE = (branchName == "main") ? "PRODUCTION" : "STAGING"
-                    } else {
-                        env.BUILD_TYPE = params.BUILD_TYPE
-                    }
-
-                    echo "🔹 Final Build Type: ${env.BUILD_TYPE}"
+                    echo "🔹 Branch: ${env.ACTUAL_BRANCH}"
+                    echo "🔹 Git Tag: ${env.GIT_TAG ?: 'NO TAG'}"
                 }
             }
         }
@@ -64,39 +69,18 @@ pipeline {
             steps {
                 script {
 
-                    /* -------------------------
-                       STAGING ENVIRONMENT
-                       ------------------------- */
-                    if (env.BUILD_TYPE == 'STAGING') {
+                    /* -----------------------------------
+                       PRODUCTION (TAG-BASED ONLY)
+                    ----------------------------------- */
+                    if (env.GIT_TAG) {
 
-                        env.DEPLOY_ENV = "staging"
-                        env.IMAGE_NAME = "anrs125/sample-private"
-                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging1"
-                        env.DEPLOYMENT_FILE = "staging-report.yaml"
-                        env.DEPLOYMENT_NAME = "staging-reports-api"
-                        env.TAG_TYPE = "commit"
+                        echo "✔ Production tag detected → ${env.GIT_TAG}"
 
-                    /* -------------------------
-                       PRODUCTION ENVIRONMENT
-                       ------------------------- */
-                    } else if (env.BUILD_TYPE == 'PRODUCTION') {
-
-                        if (!env.GIT_TAG) {
-                            error """
-❌ PRODUCTION DEPLOY BLOCKED — NO TAG FOUND
-
-To deploy:
-  git tag -a v1.0.0 -m "Release"
-  git push origin v1.0.0
-"""
-                        }
-
-                        // Optional: enforce proper version tag
                         if (!(env.GIT_TAG ==~ /^v[0-9]+\\.[0-9]+\\.[0-9]+$/)) {
                             error """
 ❌ INVALID PRODUCTION TAG: ${env.GIT_TAG}
 
-Production requires semantic version:
+Production tags must follow semantic versioning:
   ✔ v1.0.0
   ✔ v2.3.4
 """
@@ -108,23 +92,38 @@ Production requires semantic version:
                         env.DEPLOYMENT_FILE = "prod-reports.yaml"
                         env.DEPLOYMENT_NAME = "prod-reports-api"
                         env.TAG_TYPE = "release"
+                    }
 
-                    } else {
-                        error "❌ Unknown BUILD_TYPE: ${env.BUILD_TYPE}"
+                    /* -----------------------------------
+                       STAGING (staging branch)
+                    ----------------------------------- */
+                    else if (env.ACTUAL_BRANCH == "staging") {
+
+                        env.DEPLOY_ENV = "staging"
+                        env.IMAGE_NAME = "anrs125/sample-private"
+                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging1"
+                        env.DEPLOYMENT_FILE = "staging-report.yaml"
+                        env.DEPLOYMENT_NAME = "staging-reports-api"
+                        env.TAG_TYPE = "commit"
+                    }
+
+                    else {
+                        error """
+❌ Blocked: This pipeline only runs on:
+  ✔ staging branch
+  ✔ Git tags (v1.0.0)
+"""
                     }
 
                     echo """
-============================
-      BUILD CONFIG
-============================
-Build Type      : ${env.BUILD_TYPE}
-Branch          : ${env.ACTUAL_BRANCH}
+==================== DEPLOY CONFIG ====================
 Environment     : ${env.DEPLOY_ENV}
+Branch          : ${env.ACTUAL_BRANCH}
 Docker Repo     : ${env.IMAGE_NAME}
-Deployment Name : ${env.DEPLOYMENT_NAME}
 Deployment File : ${env.DEPLOYMENT_FILE}
-Git Tag         : ${env.GIT_TAG}
-============================
+Deployment Name : ${env.DEPLOYMENT_NAME}
+Tag Detected    : ${env.GIT_TAG}
+=======================================================
 """
                 }
             }
@@ -139,21 +138,22 @@ Git Tag         : ${env.GIT_TAG}
                             error "Rollback requested but TARGET_VERSION missing!"
                         }
                         env.IMAGE_TAG = params.TARGET_VERSION.trim()
-                        echo "Rollback version selected: ${env.IMAGE_TAG}"
+                        echo "Rollback Version → ${env.IMAGE_TAG}"
                         return
                     }
 
-                    if (env.TAG_TYPE == "commit") {  // STAGING ONLY
-                        def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                        env.IMAGE_TAG = "staging-${commitId}"
-                        echo "Staging Tag: ${env.IMAGE_TAG}"
-                        return
-                    }
-
-                    if (env.TAG_TYPE == "release") { // PRODUCTION ONLY
+                    // Production uses Git Tag
+                    if (env.TAG_TYPE == "release") {
                         env.IMAGE_TAG = env.GIT_TAG
-                        echo "Production Tag: ${env.IMAGE_TAG}"
+                        echo "Production Tag → ${env.IMAGE_TAG}"
+                        return
                     }
+
+                    // Staging commit-based tag
+                    def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    env.IMAGE_TAG = "staging-${commitId}"
+
+                    echo "Staging Tag → ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -163,7 +163,7 @@ Git Tag         : ${env.GIT_TAG}
                 script {
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
                         usernameVariable: 'USER', passwordVariable: 'PASS')]) {
-                        
+
                         sh "echo ${PASS} | docker login -u ${USER} --password-stdin"
                     }
                 }
@@ -174,7 +174,7 @@ Git Tag         : ${env.GIT_TAG}
             steps {
                 script {
                     def fullImage = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    echo "🐳 Building image: ${fullImage}"
+                    echo "🐳 Building image → ${fullImage}"
 
                     sh """
                         docker build -t ${fullImage} .
@@ -185,5 +185,3 @@ Git Tag         : ${env.GIT_TAG}
         }
     }
 }
-//jhergfuywjehsrgfveurj main
-//hzngdfuehsdgfcvjesdhf
