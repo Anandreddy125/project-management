@@ -32,6 +32,4 @@ class Kernel extends ConsoleKernel final test for docker build image
         require base_path('routes/console.php');
     }
 }
-// test for tags at 12 52. mzfczs, jfgskzjfdc ,mjgcksjzdmc zdhjvbldxkg,fhjv kuayf;oltaufilsreyfh  khjgfdsdrtyujnbgftyh jtwediuwtj3edi  kaurtdgwoakejrgd mjhntdgckwjeaszgfckuwjyzrsgcvkauj
- // mashdgckusjezgf
-//zsiukdfhleiskurhfvbliesrdkum  master ,kefdhmblskrmvbselkr,dxgfvn master
+//AWS costs are based on a pay-as-you-go utility model for individual services, driven primarily by compute, storage, and outbound data transfer. The key tools for managing and reporting these costs are AWS Cost Explorer and the detailed AWS Cost and Usage Reports (CUR). 
