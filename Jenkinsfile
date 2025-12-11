@@ -15,10 +15,9 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'BUILD_TYPE', choices: ['AUTO', 'STAGING', 'PRODUCTION'], description: 'Select build type (AUTO = detect from branch)')
-        choice(name: 'BRANCH_PARAM', choices: ['main', 'master', 'staging'], description: 'Select branch to build manually')
-        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION instead of deploy')
-        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target Docker tag for rollback (if enabled)')
+        choice(name: 'BUILD_TYPE', choices: ['AUTO', 'STAGING', 'PRODUCTION'], description: 'AUTO = detect from branch')
+        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION')
+        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Rollback version')
     }
 
     triggers {
@@ -34,52 +33,29 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 script {
-                    def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
-                    def buildType = params.BUILD_TYPE
-                    
-                    echo "🔹 Initial Build Type Selection: ${buildType}"
-                    echo "🔹 Branch Parameter: ${branchName}"
-                    echo "🔹 Branch Name from Jenkins: ${env.BRANCH_NAME ?: 'Not set'}"
-                    
-                    if (buildType == 'AUTO') {
-                        // Auto-detect based on branch
-                        if (branchName == 'master') {
-                            env.BUILD_TYPE = 'PRODUCTION'
-                        } else {
-                            env.BUILD_TYPE = 'STAGING'
-                        }
+                    def branchName = env.BRANCH_NAME ?: "staging"
+
+                    echo "🔹 Detected Branch: ${branchName}"
+
+                    checkout scm
+                    env.ACTUAL_BRANCH = branchName
+
+                    // Detect Git tag on this commit
+                    env.GIT_TAG = sh(
+                        script: "git describe --tags --exact-match HEAD 2>/dev/null || echo ''",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "🔹 Detected Git Tag: ${env.GIT_TAG ?: 'NO TAG'}"
+
+                    // BUILD TYPE AUTO LOGIC
+                    if (params.BUILD_TYPE == "AUTO") {
+                        env.BUILD_TYPE = (branchName == "main") ? "PRODUCTION" : "STAGING"
                     } else {
-                        env.BUILD_TYPE = buildType
+                        env.BUILD_TYPE = params.BUILD_TYPE
                     }
-                    
+
                     echo "🔹 Final Build Type: ${env.BUILD_TYPE}"
-                    
-                    if (env.BUILD_TYPE == 'PRODUCTION') {
-                        // Production builds - check out master branch
-                        echo "🔹 Checking out MASTER branch for PRODUCTION build..."
-                        checkout([$class: 'GitSCM',
-                            branches: [[name: "*/master"]],
-                            userRemoteConfigs: [[
-                                url: env.GIT_REPO,
-                                credentialsId: env.GIT_CREDENTIALS_ID
-                            ]]
-                        ])
-                        env.ACTUAL_BRANCH = "master"
-                        
-                    } else {
-                        // STAGING builds check out specific branch
-                        echo "🔹 Checking out branch: ${branchName} for STAGING build"
-                        checkout([$class: 'GitSCM',
-                            branches: [[name: "*/${branchName}"]],
-                            userRemoteConfigs: [[
-                                url: env.GIT_REPO,
-                                credentialsId: env.GIT_CREDENTIALS_ID
-                            ]]
-                        ])
-                        env.ACTUAL_BRANCH = branchName
-                    }
-                    
-                    echo "✔ Git Branch: ${env.ACTUAL_BRANCH}"
                 }
             }
         }
@@ -87,61 +63,69 @@ pipeline {
         stage('Determine Environment') {
             steps {
                 script {
-                    if (env.BUILD_TYPE == 'PRODUCTION') {
-                        // PRODUCTION CONFIGURATION
-                        env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/farhan-testing"
-                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging1"
-                        env.DEPLOYMENT_FILE = "prod-reports.yaml"
-                        env.DEPLOYMENT_NAME = "prod-reports-api"
-                        env.TAG_TYPE = "release"
-                        
-                    } else {
-                        // STAGING CONFIGURATION
+
+                    /* -------------------------
+                       STAGING ENVIRONMENT
+                       ------------------------- */
+                    if (env.BUILD_TYPE == 'STAGING') {
+
                         env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "anrs125/sample-private"
                         env.KUBERNETES_CREDENTIALS_ID = "reports-staging1"
                         env.DEPLOYMENT_FILE = "staging-report.yaml"
                         env.DEPLOYMENT_NAME = "staging-reports-api"
                         env.TAG_TYPE = "commit"
-                        
-                        // Validate staging branches
-                        def validStagingBranches = ['main', 'staging', 'develop', 'feature/*', 'hotfix/*']
-                        def isValid = validStagingBranches.any { pattern ->
-                            if (pattern.endsWith('/*')) {
-                                return env.ACTUAL_BRANCH.startsWith(pattern.replace('/*', ''))
-                            }
-                            return env.ACTUAL_BRANCH == pattern
+
+                    /* -------------------------
+                       PRODUCTION ENVIRONMENT
+                       ------------------------- */
+                    } else if (env.BUILD_TYPE == 'PRODUCTION') {
+
+                        if (!env.GIT_TAG) {
+                            error """
+❌ PRODUCTION DEPLOY BLOCKED — NO TAG FOUND
+
+To deploy:
+  git tag -a v1.0.0 -m "Release"
+  git push origin v1.0.0
+"""
                         }
-                        
-                        if (!isValid) {
-                            echo "⚠️  WARNING: Branch '${env.ACTUAL_BRANCH}' is not a typical staging branch, but proceeding anyway..."
+
+                        // Optional: enforce proper version tag
+                        if (!(env.GIT_TAG ==~ /^v[0-9]+\\.[0-9]+\\.[0-9]+$/)) {
+                            error """
+❌ INVALID PRODUCTION TAG: ${env.GIT_TAG}
+
+Production requires semantic version:
+  ✔ v1.0.0
+  ✔ v2.3.4
+"""
                         }
+
+                        env.DEPLOY_ENV = "production"
+                        env.IMAGE_NAME = "anrs125/farhan-testing"
+                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging1"
+                        env.DEPLOYMENT_FILE = "prod-reports.yaml"
+                        env.DEPLOYMENT_NAME = "prod-reports-api"
+                        env.TAG_TYPE = "release"
+
+                    } else {
+                        error "❌ Unknown BUILD_TYPE: ${env.BUILD_TYPE}"
                     }
 
                     echo """
-                    =============================
-                       DEPLOYMENT CONFIGURATION
-                    =============================
-                    Build Type:     ${env.BUILD_TYPE}
-                    Branch:         ${env.ACTUAL_BRANCH}
-                    Deploy Env:     ${env.DEPLOY_ENV}
-                    Docker Repo:    ${env.IMAGE_NAME}
-                    Tag Mode:       ${env.TAG_TYPE}
-                    Deployment:     ${env.DEPLOYMENT_NAME}
-                    Deployment File: ${env.DEPLOYMENT_FILE}
-                    =============================
-                    """
-                }
-            }
-        }
-
-        stage('Trivy Filesystem Scan') {
-            steps {
-                script {
-                    echo "Running Trivy filesystem scan..."
-                    sh "trivy fs . --severity HIGH,CRITICAL > trivyfs.txt || true"
-                    echo "Filesystem scan completed — saved in trivyfs.txt"
+============================
+      BUILD CONFIG
+============================
+Build Type      : ${env.BUILD_TYPE}
+Branch          : ${env.ACTUAL_BRANCH}
+Environment     : ${env.DEPLOY_ENV}
+Docker Repo     : ${env.IMAGE_NAME}
+Deployment Name : ${env.DEPLOYMENT_NAME}
+Deployment File : ${env.DEPLOYMENT_FILE}
+Git Tag         : ${env.GIT_TAG}
+============================
+"""
                 }
             }
         }
@@ -149,102 +133,53 @@ pipeline {
         stage('Generate Docker Tag') {
             steps {
                 script {
-                    def commitId = sh(script: "git rev-parse HEAD | cut -c1-7", returnStdout: true).trim()
-                    def imageTag = ""
 
                     if (params.ROLLBACK) {
                         if (!params.TARGET_VERSION?.trim()) {
-                            error("Rollback requested but no TARGET_VERSION provided.")
+                            error "Rollback requested but TARGET_VERSION missing!"
                         }
-                        imageTag = params.TARGET_VERSION.trim()
-                        echo "🔸 Rollback mode - Using provided tag: ${imageTag}"
-
-                    } else if (env.TAG_TYPE == "commit") {
-                        // STAGING builds → staging-<commitId>
-                        imageTag = "staging-${commitId}"
-                        echo "🔸 Staging build - Commit-based tag: ${imageTag}"
-
-                    } else if (env.TAG_TYPE == "release") {
-                        // PRODUCTION builds - check for tag in commit message
-                        def commitMsg = sh(script: "git log -1 --pretty=%B", returnStdout: true).trim()
-                        echo "Commit message: ${commitMsg}"
-                        
-                        // First check if there's a Git tag on this commit
-                        def gitTag = sh(
-                            script: "git describe --tags --exact-match 2>/dev/null || echo 'no-tag'",
-                            returnStdout: true
-                        ).trim()
-                        
-                        if (gitTag && gitTag != "no-tag") {
-                            echo "✔ Git Tag detected: ${gitTag}"
-                            imageTag = gitTag
-                        } else {
-                            // Fallback: extract version from commit message
-                            def version = commitMsg =~ /(v[0-9]+\.[0-9]+\.[0-9]+)/
-                            if (version) {
-                                imageTag = version[0]
-                                echo "⚠️  Using version from commit message: ${imageTag}"
-                            } else {
-                                // Last resort: use timestamp
-                                def timestamp = sh(script: "date +'%Y%m%d-%H%M%S'", returnStdout: true).trim()
-                                imageTag = "prod-${timestamp}-${commitId}"
-                                echo "⚠️  No version found, using timestamp: ${imageTag}"
-                            }
-                        }
+                        env.IMAGE_TAG = params.TARGET_VERSION.trim()
+                        echo "Rollback version selected: ${env.IMAGE_TAG}"
+                        return
                     }
 
-                    env.IMAGE_TAG = imageTag
-                    echo "==============================="
-                    echo "✅ Final Docker Image Tag: ${env.IMAGE_TAG}"
-                    echo "==============================="
+                    if (env.TAG_TYPE == "commit") {  // STAGING ONLY
+                        def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                        env.IMAGE_TAG = "staging-${commitId}"
+                        echo "Staging Tag: ${env.IMAGE_TAG}"
+                        return
+                    }
+
+                    if (env.TAG_TYPE == "release") { // PRODUCTION ONLY
+                        env.IMAGE_TAG = env.GIT_TAG
+                        echo "Production Tag: ${env.IMAGE_TAG}"
+                    }
                 }
             }
         }
 
-        stage('🔐 Docker Login') {
+        stage('Docker Login') {
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
-                        usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
-
-                        sh """
-                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin
-                        """
+                        usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+                        
+                        sh "echo ${PASS} | docker login -u ${USER} --password-stdin"
                     }
                 }
             }
         }
 
         stage('Docker Build & Push') {
-            when { expression { return !params.ROLLBACK } }
             steps {
                 script {
-                    def imageFull = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    echo "🚀 Building Docker image: ${imageFull}"
-                    
-                    // Add build arguments based on environment
-                    def buildArgs = "--build-arg ENVIRONMENT=${env.DEPLOY_ENV}"
-                    
-                    if (env.BUILD_TYPE == 'PRODUCTION') {
-                        buildArgs += " --build-arg NODE_ENV=production --build-arg APP_ENV=prod"
-                    } else {
-                        buildArgs += " --build-arg NODE_ENV=development --build-arg APP_ENV=staging"
-                    }
+                    def fullImage = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    echo "🐳 Building image: ${fullImage}"
 
                     sh """
-                        docker build --pull --no-cache ${buildArgs} -t ${imageFull} .
-                        docker push ${imageFull}
-                        
-                        # Tag as latest for staging (optional)
-                        ${env.BUILD_TYPE == 'STAGING' ? 'docker tag ${imageFull} ${env.IMAGE_NAME}:latest-staging && docker push ${env.IMAGE_NAME}:latest-staging' : ''}
-                        
-                        # Also tag with commit SHA for traceability
-                        docker tag ${imageFull} ${env.IMAGE_NAME}:git-${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}
-                        docker push ${env.IMAGE_NAME}:git-${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}
+                        docker build -t ${fullImage} .
+                        docker push ${fullImage}
                     """
-                    
-                    echo "✅ Image pushed successfully!"
-                    echo "📦 Primary Tag: ${imageFull}"
                 }
             }
         }
