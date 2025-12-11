@@ -33,4 +33,4 @@ class Kernel extends ConsoleKernel final test for docker build image
     }
 }
 //AWS costs are based on a pay-as-you-go utility model for individual services, nbcv nxcb xnbcv jznxn bc ,kjNX,KJCV J  HJ MQBDACdriven primarily by compute, storage, and outbound data transfer. The key tools for managing and reporting these costs are AWS Cost Explorer and the detailed AWS Cost and Usage Reports (CUR). kjchkzsdjfcbsjfhvbdjxf.jhrgdcsuzdjchghwmesgcuesjgfvesjdrgnvcesujyfgcbseouryfdgbp;QIKQUWSJqoik2euj  kwjeaydgkwuefgeksurtchgeksuyrshmgdkweuzsjdgchkusdrzjfhg vekuszrhdfg bwuaekjfdcgblwiakmjsahzblI   MJ
-//hfgvjmlIUQJSKLZJHBcbdmc vasjhgdfvcjhk,HSLK,jnk
+//hfgvjmlIUQJSKLZJHBcbdmc vasjhgdfvcjhk,HSLK,jnk  ,kjfgckjsfgcvrjfgcv,aszmjcb,
