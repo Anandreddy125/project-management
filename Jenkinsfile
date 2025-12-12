@@ -91,7 +91,7 @@ pipeline {
                         ).trim()
 
                         if (!tagName) {
-                           echo "🚀 NO TAG NAME- ERROR"  
+                           error("Tag not found. Stopping build.")
                         }
 
                         imageTag = tagName
