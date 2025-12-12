@@ -14,7 +14,7 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'BRANCH_PARAM', choices: ['main', 'master'], description: 'Select branch to build manually')
+        choice(name: 'BRANCH_PARAM', choices: ['staging', 'master'], description: 'Select branch to build manually')
     }
 
     triggers {
@@ -91,13 +91,6 @@ pipeline {
                         ).trim()
 
                         if (!tagName) {
-                            error("""
-❌ No Git tag found on this commit!
-Production builds *require* a Git Tag.
-EXAMPLE:
-    git tag -a v1.0.3 -m "Release 1.0.3"
-    git push --tags
-""")
                         }
 
                         imageTag = tagName
