@@ -91,6 +91,7 @@ pipeline {
                         ).trim()
 
                         if (!tagName) {
+                           error("Tag not found. Stopping build.")
                         }
 
                         imageTag = tagName
