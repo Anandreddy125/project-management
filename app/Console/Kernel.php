@@ -32,4 +32,4 @@ class Kernel extends ConsoleKernel final test for docker build image
         require base_path('routes/console.php');
     }
 }
-// test for empty tag-name failure master branch
+// Test for directly building after merge with commit and add
