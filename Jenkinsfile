@@ -91,6 +91,7 @@ pipeline {
                         ).trim()
 
                         if (!tagName) {
+                           echo "🚀 NO TAG NAME- ERROR"  
                         }
 
                         imageTag = tagName
