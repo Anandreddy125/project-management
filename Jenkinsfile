@@ -82,7 +82,7 @@ pipeline {
                     if (env.GIT_BRANCH?.startsWith("refs/tags/")) {
                         env.ACTUAL_BRANCH = "master"
                         env.DEPLOY_ENV    = "production"
-                        env.IMAGE_NAME    = "prophazedocker/i-report"
+                        env.IMAGE_NAME    = "anrs125/reports-tesing"
                         env.TAG_TYPE      = "release"
                     }
 
@@ -90,7 +90,7 @@ pipeline {
                     else if (env.GIT_REF == "staging") {
                         env.ACTUAL_BRANCH = "staging"
                         env.DEPLOY_ENV    = "staging"
-                        env.IMAGE_NAME    = "prophazedocker/staging-report"
+                        env.IMAGE_NAME    = "anrs125/reports-tesing"
                         env.TAG_TYPE      = "commit"
                     }
 
@@ -198,3 +198,4 @@ pipeline {
     }
 }
 // change happen on jenkinsfile 
+// dockerimage changed
