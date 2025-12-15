@@ -46,14 +46,14 @@ pipeline {
                 script {
                     if (env.ACTUAL_BRANCH == "staging") {
                         env.DEPLOY_ENV = "staging"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
+                        env.IMAGE_NAME = "prophazedocker/staging-report"
         //                env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
         //                env.DEPLOYMENT_FILE = "staging-report.yaml"
         //               env.DEPLOYMENT_NAME = "staging-reports-api"
                         env.TAG_TYPE = "commit"
                     } else if (env.ACTUAL_BRANCH == "master") {
                         env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
+                        env.IMAGE_NAME = "prophazedocker/i-report"
         //                env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
         //                env.DEPLOYMENT_FILE = "prod-reports.yaml"
         //              env.DEPLOYMENT_NAME = "prod-reports-api"
@@ -259,5 +259,4 @@ pipeline {
         }
     }
 }
-
-//changed jenkinsfile
+//checking release
