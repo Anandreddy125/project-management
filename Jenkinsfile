@@ -33,6 +33,8 @@ pipeline {
     }
 
     stages {
+
+        /* ---------------- CLEAN ---------------- */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
@@ -54,7 +56,19 @@ pipeline {
                     ])
 
                     env.GIT_REF = ref
-                    echo "Checked out: ${env.GIT_REF}"
+                    echo "Checked out ref: ${env.GIT_REF}"
+                }
+            }
+        }
+
+        /* ---------------- HARD BLOCK MASTER PUSH ---------------- */
+        stage('Pre-check Trigger') {
+            steps {
+                script {
+                    // If master branch build WITHOUT tag → STOP
+                    if (env.GIT_REF == 'master' && !env.GIT_BRANCH?.startsWith('refs/tags/')) {
+                        error("❌ Master branch push detected. Production builds are allowed ONLY via Git tags.")
+                    }
                 }
             }
         }
@@ -64,25 +78,20 @@ pipeline {
             steps {
                 script {
 
-                    // TAG BUILD (PRODUCTION)
-                    if (env.GIT_REF?.startsWith("refs/tags/")) {
+                    // TAG BUILD → PRODUCTION
+                    if (env.GIT_BRANCH?.startsWith("refs/tags/")) {
                         env.ACTUAL_BRANCH = "master"
                         env.DEPLOY_ENV    = "production"
                         env.IMAGE_NAME    = "anrs125/reports-tesing"
                         env.TAG_TYPE      = "release"
                     }
 
-                    // STAGING BRANCH
+                    // STAGING
                     else if (env.GIT_REF == "staging") {
                         env.ACTUAL_BRANCH = "staging"
                         env.DEPLOY_ENV    = "staging"
-                        env.IMAGE_NAME    = "anrs125/reports-tesing"
+                        env.IMAGE_NAME    = "panrs125/reports-tesing"
                         env.TAG_TYPE      = "commit"
-                    }
-
-                    // MASTER WITHOUT TAG → BLOCK
-                    else if (env.GIT_REF == "master") {
-                        error("❌ Master branch builds are allowed ONLY via Git tags")
                     }
 
                     else {
