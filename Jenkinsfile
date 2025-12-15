@@ -219,7 +219,7 @@ pipeline {
         success {
             script {
                 slackSend(
-                    channel: '#report-ci-watchtower',
+                    channel: 'C09M08HUK8W',
                     color: '#36A64F',
                     tokenCredentialId: 'slack-token',
                     message: ":white_check_mark: *Deployment Successful!*\n\n*Env:* ${env.DEPLOY_ENV}\n*Image:* ${env.IMAGE_NAME}:${env.IMAGE_TAG}\n<${env.BUILD_URL}|View Build>"
@@ -246,7 +246,7 @@ pipeline {
         failure {
             script {
                 slackSend(
-                    channel: '#report-ci-watchtower',
+                    channel: '#C09M08HUK8W',
                     color: '#FF0000',
                     tokenCredentialId: 'slack-token',
                     message: ":x: *Build Failed!*\n\n*Env:* ${env.DEPLOY_ENV}\n<${env.BUILD_URL}|View Logs>"
