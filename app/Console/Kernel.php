@@ -44,4 +44,4 @@ class Kernel extends ConsoleKernel final test for docker build image
 //master tagging is working.
 // add on jenkinsfile githubPush()
 //testing on commit and tag or version
-//Even if Jenkins was triggered by master, you force checkout of staging
+//Even if Jenkins was triggered by master, you force checkout of staging kdjgfbksejmgfbsk
