@@ -16,9 +16,10 @@ pipeline {
         string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target Docker tag for rollback (if enabled)')
     }
     triggers {
-        // We remove 'githubPush()'. 
-        // The trigger is now handled by GitHub Webhook configuration sending 'create' or 'release' events, 
-        // which the Jenkins GitHub plugin interprets correctly.
+        // ADDED: This satisfies the syntax requirement that the 'triggers' block cannot be empty.
+        // The webhook configuration in GitHub itself will still handle immediate triggering 
+        // upon tag pushes, while this acts as a syntactic placeholder.
+        pollSCM('H 0 * * *') 
     }
     stages {
         stage('Clean Workspace') {
