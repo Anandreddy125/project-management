@@ -16,26 +16,8 @@ pipeline {
         string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target Docker tag for rollback (if enabled)')
     }
     triggers {
-        // Option 1: SCM polling (triggers on both branches and tags)
+        // SCM polling - will detect both branch and tag changes
         pollSCM('H/2 * * * *')  // Poll every 2 minutes
-        
-        // Option 2: GitHub webhook (configure in GitHub webhook settings)
-        // githubPush()
-        
-        // Option 3: GitHub pull request builder (if using PRs)
-        // githubPullRequest(
-        //     adminlist: '',
-        //     allowMembersOfWhitelistedOrgsAsAdmin: true,
-        //     orgslist: '',
-        //     cron: '',
-        //     triggerPhrase: '',
-        //     onlyTriggerPhrase: false,
-        //     useGitHubHooks: true,
-        //     permitAll: false,
-        //     autoCloseFailedPullRequests: false,
-        //     displayBuildErrorsOnDownstreamBuilds: false,
-        //     whiteListTargetBranches: [[name: 'master'], [name: 'staging']]
-        // )
     }
     stages {
         stage('Clean Workspace') {
@@ -47,9 +29,19 @@ pipeline {
                     def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
                     echo ":small_blue_diamond: Checking out branch: ${branchName}"
                     
-                    // Get the actual branch/tag that triggered the build
-                    def changeBranch = env.GIT_BRANCH ?: branchName
-                    echo "Triggered by: ${changeBranch}"
+                    // IMPORTANT: Check if this is triggered by a tag push
+                    def isTagPush = false
+                    def tagName = ""
+                    
+                    // Check GIT_BRANCH format - tags come as origin/tags/v1.0.0
+                    if (env.GIT_BRANCH && env.GIT_BRANCH.contains('tags/')) {
+                        isTagPush = true
+                        tagName = env.GIT_BRANCH.replace('origin/tags/', '')
+                        echo "🎯 TAG PUSH detected: ${tagName}"
+                        // Force build as production from tag
+                        branchName = "master"
+                        env.FORCE_PRODUCTION = "true"
+                    }
                     
                     checkout([$class: 'GitSCM',
                         branches: [[name: "*/${branchName}"]],
@@ -63,51 +55,45 @@ pipeline {
                         submoduleCfg: []
                     ])
                     
-                    // Try to detect if this is a tag build
-                    def isTagBuild = false
-                    def tagName = ""
+                    // Get the actual tag if available
+                    def gitTag = sh(
+                        script: "git describe --tags --exact-match HEAD 2>/dev/null || true",
+                        returnStdout: true
+                    ).trim()
                     
-                    try {
-                        // Check if HEAD points to a tag
-                        tagName = sh(
-                            script: "git describe --tags --exact-match HEAD 2>/dev/null || true",
-                            returnStdout: true
-                        ).trim()
-                        
-                        if (tagName) {
-                            isTagBuild = true
-                            echo "🎯 This is a TAG build: ${tagName}"
-                            env.IS_TAG_BUILD = "true"
-                            env.TAG_NAME = tagName
-                        }
-                    } catch (Exception e) {
-                        echo "Not a tag build: ${e.message}"
+                    if (gitTag && !tagName) {
+                        tagName = gitTag
+                        isTagPush = true
                     }
                     
                     env.ACTUAL_BRANCH = branchName
-                    env.IS_TAG_BUILD = isTagBuild.toString()
+                    env.IS_TAG_PUSH = isTagPush.toString()
+                    env.TAG_NAME = tagName ?: ""
                 }
             }
         }
         stage('Determine Environment') {
             steps {
                 script {
-                    def isTagBuild = env.IS_TAG_BUILD.toBoolean()
+                    def isTagPush = env.IS_TAG_PUSH.toBoolean()
                     
-                    if (isTagBuild) {
-                        // Tag builds always go to production
+                    if (isTagPush) {
+                        // Tag pushes always go to production
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "anrs125/reports-tesing"
                         env.TAG_TYPE = "release"
-                        echo "🚀 TAG BUILD detected: ${env.TAG_NAME} → Production"
+                        echo "🚀 TAG PUSH detected: ${env.TAG_NAME} → Production"
                     } else if (env.ACTUAL_BRANCH == "staging") {
                         env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "anrs125/reports-tesing"
                         env.TAG_TYPE = "commit"
                     } else if (env.ACTUAL_BRANCH == "master") {
-                        env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.TAG_TYPE = "release"
+                        // Master branch push - skip production build or do something else
+                        // You can either skip or do a dev build
+                        echo "⚠️ Master branch push detected. Production builds only on tags."
+                        echo "👉 If you want production, create and push a tag instead."
+                        env.SKIP_BUILD = "true"
+                        return  // Skip rest of pipeline
                     } else {
                         error("Unsupported branch: ${env.ACTUAL_BRANCH}")
                     }
@@ -116,7 +102,7 @@ pipeline {
                     Environment Info
                     ----------------------
                     Branch: ${env.ACTUAL_BRANCH}
-                    Tag Build: ${isTagBuild}
+                    Tag Push: ${isTagPush}
                     Tag: ${env.TAG_NAME ?: 'N/A'}
                     Deploy: ${env.DEPLOY_ENV}
                     Repo:   ${env.IMAGE_NAME}
@@ -126,9 +112,12 @@ pipeline {
             }
         }
         stage('Generate Docker Tag') {
+            when {
+                expression { return env.SKIP_BUILD != "true" }
+            }
             steps {
                 script {
-                    def isTagBuild = env.IS_TAG_BUILD.toBoolean()
+                    def isTagPush = env.IS_TAG_PUSH.toBoolean()
                     def commitId = sh(script: "git rev-parse HEAD | cut -c1-7", returnStdout: true).trim()
                     def imageTag = ""
                     
@@ -137,26 +126,26 @@ pipeline {
                             error("Rollback requested but no TARGET_VERSION provided.")
                         }
                         imageTag = params.TARGET_VERSION.trim()
-                    } else if (isTagBuild) {
+                    } else if (isTagPush) {
                         // Use the actual tag name
                         imageTag = env.TAG_NAME
                         echo "🎯 Using Git tag for Docker tag: ${imageTag}"
                     } else if (env.TAG_TYPE == "commit") {
                         imageTag = "staging-${commitId}"
-                    } else if (env.TAG_TYPE == "release") {
-                        // For master branch (non-tag builds), use commit hash
+                    } else {
                         imageTag = "prod-${commitId}"
                     }
                     
                     env.IMAGE_TAG = imageTag
                     echo ":rocket: FINAL Docker Tag: ${env.IMAGE_TAG}"
-                    
-                    // Save tag info for downstream jobs
                     currentBuild.description = "${env.DEPLOY_ENV.toUpperCase()} - ${env.IMAGE_TAG}"
                 }
             }
         }
         stage('Docker Login') {
+            when {
+                expression { return env.SKIP_BUILD != "true" }
+            }
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
@@ -168,35 +157,23 @@ pipeline {
         }
         stage('Docker Build & Push') {
             when { 
-                expression { 
-                    return !params.ROLLBACK 
+                allOf {
+                    expression { return !params.ROLLBACK }
+                    expression { return env.SKIP_BUILD != "true" }
                 }
             }
             steps {
                 script {
                     def imageFull = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    def latestTag = ""
-                    
-                    // Also tag as latest for staging, or specific pattern for production
-                    if (env.DEPLOY_ENV == "staging") {
-                        latestTag = "${env.IMAGE_NAME}:staging-latest"
-                    } else if (env.DEPLOY_ENV == "production" && env.IS_TAG_BUILD.toBoolean()) {
-                        latestTag = "${env.IMAGE_NAME}:latest"
-                    }
                     
                     echo "Building Docker image: ${imageFull}"
                     sh """
                         docker build --pull --no-cache -t ${imageFull} .
-                        
-                        # Push the main tag
                         docker push ${imageFull}
-                        
-                        # Push latest tag if applicable
-                        ${latestTag ? "docker tag ${imageFull} ${latestTag} && docker push ${latestTag}" : "echo 'No latest tag for this build'"}
                     """
                     sh "docker logout"
                     
-                    // Archive the tag for future reference
+                    // Save build info
                     writeFile file: 'build-info.txt', text: """
                     Build Information
                     -----------------
@@ -211,20 +188,6 @@ pipeline {
                 }
             }
         }
-        
-        // Optional: Add a notification stage
-        stage('Notify') {
-            steps {
-                script {
-                    echo "✅ Build completed successfully!"
-                    echo "📦 Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    echo "🌍 Environment: ${env.DEPLOY_ENV}"
-                    
-                    // Add notification logic here (Slack, Email, etc.)
-                    // slackSend color: 'good', message: "Build successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
-                }
-            }
-        }
     }
     
     post {
@@ -233,11 +196,9 @@ pipeline {
         }
         failure {
             echo "❌ Pipeline failed!"
-            // slackSend color: 'danger', message: "Build failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}"
         }
         always {
             echo "🧹 Cleaning up..."
-            // Clean up Docker images
             sh 'docker system prune -f || true'
         }
     }
