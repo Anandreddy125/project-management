@@ -12,14 +12,10 @@ pipeline {
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
+        IMAGE_REPO            = "anrs125/reports-tesing"
     }
 
     parameters {
-        choice(
-            name: 'BRANCH_PARAM',
-            choices: ['staging', 'master'],
-            description: 'Used only for MANUAL builds'
-        )
         booleanParam(
             name: 'ROLLBACK',
             defaultValue: false,
@@ -48,14 +44,19 @@ pipeline {
             steps {
                 script {
 
-                    // TAG PUSH (Production Release)
-                    if (env.GIT_BRANCH?.startsWith('refs/tags/')) {
+                    /*
+                      Multibranch behavior:
+                      - Branch job: BRANCH_NAME = staging | master
+                      - Tag job   : TAG_NAME    = v1.0.9
+                    */
 
-                        env.IS_TAG_BUILD  = "true"
-                        env.BUILD_TAG    = env.GIT_BRANCH.replace('refs/tags/', '')
+                    if (env.TAG_NAME) {
+
+                        env.IS_TAG_BUILD   = "true"
                         env.ACTUAL_BRANCH = "master"
+                        env.BUILD_TAG     = env.TAG_NAME
 
-                        echo "🏷️ Tag build detected: ${env.BUILD_TAG}"
+                        echo "🏷️ Tag job detected: ${env.BUILD_TAG}"
 
                         checkout([
                             $class: 'GitSCM',
@@ -68,16 +69,14 @@ pipeline {
 
                     } else {
 
-                        // BRANCH PUSH or MANUAL BUILD
-                        env.IS_TAG_BUILD = "false"
-                        def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
-                        env.ACTUAL_BRANCH = branchName
+                        env.IS_TAG_BUILD   = "false"
+                        env.ACTUAL_BRANCH = env.BRANCH_NAME
 
-                        echo "🔄 Branch build: ${branchName}"
+                        echo "🔄 Branch job detected: ${env.ACTUAL_BRANCH}"
 
                         checkout([
                             $class: 'GitSCM',
-                            branches: [[name: "*/${branchName}"]],
+                            branches: [[name: "*/${env.ACTUAL_BRANCH}"]],
                             userRemoteConfigs: [[
                                 url: env.GIT_REPO,
                                 credentialsId: env.GIT_CREDENTIALS_ID
@@ -88,7 +87,7 @@ pipeline {
             }
         }
 
-        /* ---------------- ENVIRONMENT ---------------- */
+        /* ---------------- ENV ---------------- */
         stage('Determine Environment') {
             steps {
                 script {
@@ -96,18 +95,16 @@ pipeline {
                     if (env.IS_TAG_BUILD == "true") {
 
                         env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
                         env.TAG_TYPE   = "release"
 
                     } else if (env.ACTUAL_BRANCH == "staging") {
 
                         env.DEPLOY_ENV = "staging"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
                         env.TAG_TYPE   = "commit"
 
                     } else if (env.ACTUAL_BRANCH == "master") {
 
-                        error("❌ Direct push to master without tag is NOT allowed")
+                        error("❌ Direct master branch builds are blocked. Use Git tags for production.")
 
                     } else {
                         error("Unsupported branch: ${env.ACTUAL_BRANCH}")
@@ -119,10 +116,9 @@ Environment Info
 ==============================
 Branch     : ${env.ACTUAL_BRANCH}
 Deploy Env : ${env.DEPLOY_ENV}
-Image Repo : ${env.IMAGE_NAME}
 Tag Type   : ${env.TAG_TYPE}
 Tag Build  : ${env.IS_TAG_BUILD}
-Build Tag  : ${env.BUILD_TAG ?: 'N/A'}
+Tag Name   : ${env.BUILD_TAG ?: 'N/A'}
 ==============================
 """
                 }
@@ -144,7 +140,6 @@ Build Tag  : ${env.BUILD_TAG ?: 'N/A'}
                     } else if (env.IS_TAG_BUILD == "true") {
 
                         env.IMAGE_TAG = env.BUILD_TAG
-                        echo "🏷️ Using Git tag: ${env.IMAGE_TAG}"
 
                     } else {
 
@@ -156,7 +151,7 @@ Build Tag  : ${env.BUILD_TAG ?: 'N/A'}
                         env.IMAGE_TAG = "staging-${commitId}"
                     }
 
-                    echo "🚀 FINAL Docker Tag: ${env.IMAGE_TAG}"
+                    echo "🚀 Docker Image Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -180,7 +175,7 @@ Build Tag  : ${env.BUILD_TAG ?: 'N/A'}
             when { expression { return !params.ROLLBACK } }
             steps {
                 script {
-                    def image = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    def image = "${env.IMAGE_REPO}:${env.IMAGE_TAG}"
                     sh """
                         docker build --no-cache -t ${image} .
                         docker push ${image}
@@ -200,8 +195,7 @@ Build Tag  : ${env.BUILD_TAG ?: 'N/A'}
                 message: """
 :white_check_mark: *Deployment Successful*
 Env   : ${env.DEPLOY_ENV}
-Image : ${env.IMAGE_NAME}:${env.IMAGE_TAG}
-Tag   : ${env.BUILD_TAG ?: 'N/A'}
+Image : ${env.IMAGE_REPO}:${env.IMAGE_TAG}
 <${env.BUILD_URL}|View Build>
 """
             )
