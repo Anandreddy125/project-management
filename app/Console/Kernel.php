@@ -43,3 +43,4 @@ class Kernel extends ConsoleKernel final test for docker build image
 // the git tag is not fetch latest.
 //master tagging is working.
 // add on jenkinsfile githubPush()
+//testing on commit and tag or version
