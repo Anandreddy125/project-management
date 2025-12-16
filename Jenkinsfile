@@ -6,7 +6,7 @@ pipeline {
         timeout(time: 60, unit: 'MINUTES')
     }
     environment {
-        GIT_REPO              = "github.com"
+        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
     }
