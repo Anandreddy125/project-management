@@ -20,6 +20,9 @@ pipeline {
       - DO NOT use githubPush() trigger
       - We filter TAGS manually
     */
+    triggers {
+    githubPush()   // Trigger when GitHub pushes occur (branch or tag)
+ }
 
     stages {
 
@@ -149,5 +152,3 @@ pipeline {
         }
     }
 }
-
-//ch naged
