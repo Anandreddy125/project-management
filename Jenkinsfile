@@ -1,217 +1,131 @@
 pipeline {
     agent any
-
     options {
         disableConcurrentBuilds()
         timestamps()
         timeout(time: 60, unit: 'MINUTES')
-        skipDefaultCheckout(true)
     }
-
     environment {
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
-        IMAGE_REPO            = "anrs125/reports-tesing"
     }
-
     parameters {
-        booleanParam(
-            name: 'ROLLBACK',
-            defaultValue: false,
-            description: 'Rollback using TARGET_VERSION'
-        )
-        string(
-            name: 'TARGET_VERSION',
-            defaultValue: '',
-            description: 'Docker tag for rollback'
-        )
+        choice(name: 'BRANCH_PARAM', choices: ['staging', 'master'], description: 'Select branch to build manually')
+        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION instead of deploy')
+        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target Docker tag for rollback (if enabled)')
     }
-
     triggers {
-        githubPush()
+        // ADDED: This satisfies the syntax requirement that the 'triggers' block cannot be empty.
+        // The webhook configuration in GitHub itself will still handle immediate triggering 
+        // upon tag pushes, while this acts as a syntactic placeholder.
+        pollSCM('H 0 * * *') 
     }
-
     stages {
-
-        /* ---------------- CLEAN ---------------- */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
-
-        /* ---------------- CHECKOUT ---------------- */
         stage('Checkout Code') {
             steps {
                 script {
-
-                    /*
-                      Multibranch behavior:
-                      - Branch job: BRANCH_NAME = staging | master
-                      - Tag job   : TAG_NAME    = v1.0.9
-                    */
-
-                    if (env.TAG_NAME) {
-
-                        env.IS_TAG_BUILD   = "true"
-                        env.ACTUAL_BRANCH = "master"
-                        env.BUILD_TAG     = env.TAG_NAME
-
-                        echo "🏷️ Tag job detected: ${env.BUILD_TAG}"
-
-                        checkout([
-                            $class: 'GitSCM',
-                            branches: [[name: "refs/tags/${env.BUILD_TAG}"]],
-                            userRemoteConfigs: [[
-                                url: env.GIT_REPO,
-                                credentialsId: env.GIT_CREDENTIALS_ID
-                            ]]
-                        ])
-
-                    } else {
-
-                        env.IS_TAG_BUILD   = "false"
-                        env.ACTUAL_BRANCH = env.BRANCH_NAME
-
-                        echo "🔄 Branch job detected: ${env.ACTUAL_BRANCH}"
-
-                        checkout([
-                            $class: 'GitSCM',
-                            branches: [[name: "*/${env.ACTUAL_BRANCH}"]],
-                            userRemoteConfigs: [[
-                                url: env.GIT_REPO,
-                                credentialsId: env.GIT_CREDENTIALS_ID
-                            ]]
-                        ])
-                    }
+                    def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
+                    echo ":small_blue_diamond: Checking out branch: ${branchName}"
+                    checkout([$class: 'GitSCM',
+                        branches: [[name: "*/${branchName}"]],
+                        userRemoteConfigs: [[
+                            url: env.GIT_REPO,
+                            credentialsId: env.GIT_CREDENTIALS_ID
+                        ]]
+                    ])
+                    env.ACTUAL_BRANCH = branchName
                 }
             }
         }
-
-        /* ---------------- ENV ---------------- */
         stage('Determine Environment') {
             steps {
                 script {
-
-                    if (env.IS_TAG_BUILD == "true") {
-
-                        env.DEPLOY_ENV = "production"
-                        env.TAG_TYPE   = "release"
-
-                    } else if (env.ACTUAL_BRANCH == "staging") {
-
+                    if (env.ACTUAL_BRANCH == "staging") {
                         env.DEPLOY_ENV = "staging"
-                        env.TAG_TYPE   = "commit"
-
+                        env.IMAGE_NAME = "anrs125/reports-tesing"
+                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
+                        env.DEPLOYMENT_FILE = "staging-report.yaml"
+                        env.DEPLOYMENT_NAME = "staging-reports-api"
+                        env.TAG_TYPE = "commit"
                     } else if (env.ACTUAL_BRANCH == "master") {
-
-                        error("❌ Direct master branch builds are blocked. Use Git tags for production.")
-
+                        env.DEPLOY_ENV = "production"
+                        env.IMAGE_NAME = "anrs125/reports-tesing"
+                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
+                        env.DEPLOYMENT_FILE = "prod-reports.yaml"
+                        env.DEPLOYMENT_NAME = "prod-reports-api"
+                        env.TAG_TYPE = "release"
                     } else {
                         error("Unsupported branch: ${env.ACTUAL_BRANCH}")
                     }
-
                     echo """
-==============================
-Environment Info
-==============================
-Branch     : ${env.ACTUAL_BRANCH}
-Deploy Env : ${env.DEPLOY_ENV}
-Tag Type   : ${env.TAG_TYPE}
-Tag Build  : ${env.IS_TAG_BUILD}
-Tag Name   : ${env.BUILD_TAG ?: 'N/A'}
-==============================
-"""
-                }
-            }
-        }
-
-        /* ---------------- DOCKER TAG ---------------- */
-        stage('Generate Docker Tag') {
-            steps {
-                script {
-
-                    if (params.ROLLBACK) {
-
-                        if (!params.TARGET_VERSION?.trim()) {
-                            error("Rollback requested but TARGET_VERSION missing")
-                        }
-                        env.IMAGE_TAG = params.TARGET_VERSION.trim()
-
-                    } else if (env.IS_TAG_BUILD == "true") {
-
-                        env.IMAGE_TAG = env.BUILD_TAG
-
-                    } else {
-
-                        def commitId = sh(
-                            script: "git rev-parse --short HEAD",
-                            returnStdout: true
-                        ).trim()
-
-                        env.IMAGE_TAG = "staging-${commitId}"
-                    }
-
-                    echo "🚀 Docker Image Tag: ${env.IMAGE_TAG}"
-                }
-            }
-        }
-
-        /* ---------------- DOCKER LOGIN ---------------- */
-        stage('Docker Login') {
-            when { expression { return !params.ROLLBACK } }
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: env.DOCKER_CREDENTIALS_ID,
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh "echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin"
-                }
-            }
-        }
-
-        /* ---------------- BUILD & PUSH ---------------- */
-        stage('Docker Build & Push') {
-            when { expression { return !params.ROLLBACK } }
-            steps {
-                script {
-                    def image = "${env.IMAGE_REPO}:${env.IMAGE_TAG}"
-                    sh """
-                        docker build --no-cache -t ${image} .
-                        docker push ${image}
-                        docker logout
+                    Environment Info
+                    ----------------------
+                    Branch: ${env.ACTUAL_BRANCH}
+                    Deploy: ${env.DEPLOY_ENV}
+                    Repo:   ${env.IMAGE_NAME}
+                    Mode:   ${env.TAG_TYPE}
+                    Namespace: ${env.NAMESPACE}
+                    Deployment File: ${env.DEPLOYMENT_FILE}
                     """
                 }
             }
         }
-    }
-
-    post {
-        success {
-            slackSend(
-                channel: 'C09M08HUK8W',
-                color: '#36A64F',
-                tokenCredentialId: 'slack-token',
-                message: """
-:white_check_mark: *Deployment Successful*
-Env   : ${env.DEPLOY_ENV}
-Image : ${env.IMAGE_REPO}:${env.IMAGE_TAG}
-<${env.BUILD_URL}|View Build>
-"""
-            )
+        stage('Generate Docker Tag') {
+            steps {
+                script {
+                    def commitId = sh(script: "git rev-parse HEAD | cut -c1-7", returnStdout: true).trim()
+                    def imageTag = ""
+                    if (params.ROLLBACK) {
+                        if (!params.TARGET_VERSION?.trim()) {
+                            error("Rollback requested but no TARGET_VERSION provided.")
+                        }
+                        imageTag = params.TARGET_VERSION.trim()
+                    } else if (env.TAG_TYPE == "commit") {
+                        imageTag = "staging-${commitId}"
+                    } else if (env.TAG_TYPE == "release") {
+                        // This block ensures only exact tags trigger a build on master branch
+                        def tagName = sh(
+                            script: "git describe --tags --exact-match HEAD 2>/dev/null || true",
+                            returnStdout: true
+                        ).trim()
+                        if (!tagName) {
+                          // Fail the build if the current HEAD commit isn't a named tag
+                          error("The master branch requires an explicit git tag to deploy (e.g., v1.0.0). No tag found on current commit. Stopping build.")
+                        }
+                        imageTag = tagName
+                    }
+                    env.IMAGE_TAG = imageTag
+                    echo ":rocket: FINAL Docker Tag: ${env.IMAGE_TAG}"
+                }
+            }
         }
-
-        failure {
-            slackSend(
-                channel: 'C09M08HUK8W',
-                color: '#FF0000',
-                tokenCredentialId: 'slack-token',
-                message: ":x: *Build Failed* <${env.BUILD_URL}|View Logs>"
-            )
+        stage('Docker Login') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
+                        usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
+                        sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
+                    }
+                }
+            }
         }
-
-        always {
-            cleanWs()
+        stage('Docker Build & Push') {
+            when { expression { return !params.ROLLBACK } }
+            steps {
+                script {
+                    def imageFull = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    echo "Building Docker image: ${imageFull}"
+                    sh """
+                        docker build --pull --no-cache -t ${imageFull} .
+                        docker push ${imageFull}
+                    """
+                    sh "docker logout"
+                }
+            }
         }
-    }
+	}
 }
