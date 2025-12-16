@@ -31,14 +31,9 @@ pipeline {
         )
     }
 
-    /*
-      pollSCM does NOT build every 5 minutes.
-      It only triggers when a new tag is pushed.
-      You may replace this with GitHub webhook later.
-    */
+    /* 🔥 Webhook-based trigger */
     triggers {
         githubPush()
-        pollSCM('H/5 * * * *')
     }
 
     stages {
@@ -48,19 +43,56 @@ pipeline {
             steps { cleanWs() }
         }
 
+        /* ---------------- VALIDATE TRIGGER ---------------- */
+        stage('Validate Trigger') {
+            steps {
+                script {
+
+                    // TAG push → allow
+                    if (env.GIT_BRANCH?.startsWith('refs/tags/')) {
+                        echo "✅ Tag trigger detected: ${env.GIT_BRANCH}"
+                        return
+                    }
+
+                    // staging branch push → allow
+                    if (env.GIT_BRANCH == 'origin/staging' || env.GIT_BRANCH == 'staging') {
+                        echo "✅ Staging branch trigger detected"
+                        return
+                    }
+
+                    // manual build → allow
+                    if (currentBuild.rawBuild.getCause(hudson.model.Cause$UserIdCause)) {
+                        echo "✅ Manual build detected"
+                        return
+                    }
+
+                    error("""
+❌ Build blocked!
+
+Allowed triggers:
+ - git push origin staging
+ - git push origin <tag>
+
+Blocked trigger:
+ - ${env.GIT_BRANCH}
+""")
+                }
+            }
+        }
+
         /* ---------------- CHECKOUT ---------------- */
         stage('Checkout Code') {
             steps {
                 script {
 
-                    // TAG BUILD
+                    // TAG BUILD → PRODUCTION
                     if (env.GIT_BRANCH?.startsWith('refs/tags/')) {
 
-                        env.IS_TAG_BUILD = "true"
-                        env.BUILD_TAG   = env.GIT_BRANCH.replace('refs/tags/', '')
+                        env.IS_TAG_BUILD   = "true"
+                        env.BUILD_TAG     = env.GIT_BRANCH.replace('refs/tags/', '')
                         env.ACTUAL_BRANCH = "master"
 
-                        echo "🏷️ Tag-triggered build detected: ${env.BUILD_TAG}"
+                        echo "🏷️ Tag build: ${env.BUILD_TAG}"
 
                         checkout([
                             $class: 'GitSCM',
@@ -73,16 +105,15 @@ pipeline {
 
                     } else {
 
-                        // MANUAL / BRANCH BUILD
-                        env.IS_TAG_BUILD = "false"
-                        def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
-                        env.ACTUAL_BRANCH = branchName
+                        // STAGING BUILD
+                        env.IS_TAG_BUILD   = "false"
+                        env.ACTUAL_BRANCH = "staging"
 
-                        echo "🔄 Branch build: ${branchName}"
+                        echo "🔄 Staging branch build"
 
                         checkout([
                             $class: 'GitSCM',
-                            branches: [[name: "*/${branchName}"]],
+                            branches: [[name: "*/staging"]],
                             userRemoteConfigs: [[
                                 url: env.GIT_REPO,
                                 credentialsId: env.GIT_CREDENTIALS_ID
@@ -93,40 +124,30 @@ pipeline {
             }
         }
 
-        /* ---------------- ENVIRONMENT ---------------- */
+        /* ---------------- ENV ---------------- */
         stage('Determine Environment') {
             steps {
                 script {
 
                     if (env.IS_TAG_BUILD == "true") {
                         env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
                         env.TAG_TYPE   = "release"
-
-                    } else if (env.ACTUAL_BRANCH == "staging") {
-                        env.DEPLOY_ENV = "staging"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.TAG_TYPE   = "commit"
-
-                    } else if (env.ACTUAL_BRANCH == "master") {
-                        env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.TAG_TYPE   = "release"
-
                     } else {
-                        error("Unsupported branch: ${env.ACTUAL_BRANCH}")
+                        env.DEPLOY_ENV = "staging"
+                        env.TAG_TYPE   = "commit"
                     }
+
+                    env.IMAGE_NAME = "anrs125/reports-tesing"
 
                     echo """
 ==============================
 Environment Info
 ==============================
-Branch       : ${env.ACTUAL_BRANCH}
-Deploy Env   : ${env.DEPLOY_ENV}
-Image Repo   : ${env.IMAGE_NAME}
-Tag Type     : ${env.TAG_TYPE}
-Tag Build    : ${env.IS_TAG_BUILD}
-Build Tag    : ${env.BUILD_TAG ?: 'N/A'}
+Branch     : ${env.ACTUAL_BRANCH}
+Env        : ${env.DEPLOY_ENV}
+Image Repo : ${env.IMAGE_NAME}
+Tag Build  : ${env.IS_TAG_BUILD}
+Build Tag  : ${env.BUILD_TAG ?: 'N/A'}
 ==============================
 """
                 }
@@ -148,7 +169,7 @@ Build Tag    : ${env.BUILD_TAG ?: 'N/A'}
                     } else if (env.IS_TAG_BUILD == "true") {
 
                         env.IMAGE_TAG = env.BUILD_TAG
-                        echo "🏷️ Using Git tag as Docker tag: ${env.IMAGE_TAG}"
+                        echo "🏷️ Using Git tag: ${env.IMAGE_TAG}"
 
                     } else {
 
@@ -160,12 +181,12 @@ Build Tag    : ${env.BUILD_TAG ?: 'N/A'}
                         env.IMAGE_TAG = "staging-${commitId}"
                     }
 
-                    echo "🚀 FINAL Docker Tag: ${env.IMAGE_TAG}"
+                    echo "🚀 FINAL IMAGE TAG: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        /* ---- Docker build / push / deploy stages can follow ---- */
+        /* ---- Docker build / push / deploy stages go here ---- */
 
     }
 
@@ -173,17 +194,14 @@ Build Tag    : ${env.BUILD_TAG ?: 'N/A'}
 
         success {
             script {
-                def buildType = env.IS_TAG_BUILD == "true" ? "Tag Release" : "Manual Build"
-
                 slackSend(
                     channel: 'C09M08HUK8W',
                     color: '#36A64F',
                     tokenCredentialId: 'slack-token',
                     message: """
-:white_check_mark: *${buildType} Successful*
+:white_check_mark: *Deployment Successful*
 Env   : ${env.DEPLOY_ENV}
 Image : ${env.IMAGE_NAME}:${env.IMAGE_TAG}
-Tag   : ${env.BUILD_TAG ?: 'N/A'}
 <${env.BUILD_URL}|View Build>
 """
                 )
