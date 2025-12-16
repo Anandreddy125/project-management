@@ -1,256 +1,156 @@
 pipeline {
     agent any
+
     options {
         disableConcurrentBuilds()
         timestamps()
         timeout(time: 60, unit: 'MINUTES')
+        skipDefaultCheckout(true)
     }
+
     environment {
-        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID    = "terra-github"
+        GIT_REPO           = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
     }
-    parameters {
-        choice(name: 'BRANCH_PARAM', choices: ['staging', 'master'], description: 'Select branch to build manually')
-        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION instead of deploy')
-        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target Docker tag for rollback (if enabled)')
-    }
+
+    /*
+      IMPORTANT:
+      - pollSCM is REQUIRED for tag-based triggering
+      - githubPush() is NOT reliable for tag-only pushes
+    */
     triggers {
-        githubPush()
+        pollSCM('H/5 * * * *')
     }
+
     stages {
+
+        /* ---------------- CLEAN ---------------- */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
-        
+
+        /* ---------------- CHECKOUT (BRANCH + TAG) ---------------- */
         stage('Checkout Code') {
             steps {
                 script {
-                    // Determine if this is a tag-based build
-                    def isTagBuild = false
-                    def ref = env.GIT_BRANCH ?: env.BRANCH_NAME
-                    
-                    if (ref) {
-                        echo "Git Reference: ${ref}"
-                        // Check if the ref is a tag (starts with refs/tags/)
-                        if (ref.startsWith('refs/tags/') || ref.startsWith('tags/')) {
-                            isTagBuild = true
-                            env.IS_TAG_BUILD = "true"
-                            echo "✅ This is a TAG-based build"
-                        } else if (ref.contains('/tags/')) {
-                            isTagBuild = true
-                            env.IS_TAG_BUILD = "true"
-                            echo "✅ This is a TAG-based build"
-                        }
-                    }
-                    
-                    // Determine branch for checkout
-                    def checkoutBranch = "master"  // Default for tag builds
-                    
-                    if (isTagBuild) {
-                        // Extract tag name from ref
-                        def tagName = ref.replace('refs/tags/', '').replace('tags/', '')
-                        env.TAG_NAME = tagName
-                        echo "📌 Building from tag: ${tagName}"
-                        
-                        // Force master branch for all tag builds (production)
-                        env.ACTUAL_BRANCH = "master"
-                        env.BUILD_SOURCE = "TAG"
-                        checkoutBranch = "master"
-                    } else {
-                        // Regular branch build
-                        def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
-                        env.ACTUAL_BRANCH = branchName
-                        env.BUILD_SOURCE = "BRANCH"
-                        checkoutBranch = branchName
-                        
-                        echo ":small_blue_diamond: Checking out branch: ${branchName}"
-                    }
-                    
-                    // Perform checkout
-                    checkout([$class: 'GitSCM',
-                        branches: [[name: "*/${checkoutBranch}"]],
-                        extensions: [
-                            [$class: 'LocalBranch', localBranch: checkoutBranch]
-                        ],
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '**']],
                         userRemoteConfigs: [[
                             url: env.GIT_REPO,
                             credentialsId: env.GIT_CREDENTIALS_ID,
-                            refspec: "+refs/tags/*:refs/remotes/origin/tags/*"
+                            refspec: '+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*'
                         ]]
                     ])
-                    
-                    // If this is a tag build, checkout the specific tag
-                    if (isTagBuild && env.TAG_NAME) {
-                        sh """
-                            git fetch --all --tags
-                            git checkout tags/${env.TAG_NAME} -b build-${env.TAG_NAME}
-                        """
+
+                    // Detect TAG
+                    def tagName = sh(
+                        script: "git describe --tags --exact-match 2>/dev/null || true",
+                        returnStdout: true
+                    ).trim()
+
+                    if (tagName) {
+                        env.TRIGGER_TYPE = "TAG"
+                        env.GIT_TAG = tagName
+                    } else {
+                        env.TRIGGER_TYPE = "BRANCH"
+                        env.GIT_BRANCH = sh(
+                            script: "git rev-parse --abbrev-ref HEAD",
+                            returnStdout: true
+                        ).trim()
                     }
-                    
-                    // Store commit info
-                    env.GIT_COMMIT = sh(script: "git rev-parse HEAD", returnStdout: true).trim()
-                    env.GIT_COMMIT_SHORT = sh(script: "git rev-parse HEAD | cut -c1-7", returnStdout: true).trim()
-                    env.GIT_TAG = sh(script: "git describe --tags --exact-match HEAD 2>/dev/null || echo ''", returnStdout: true).trim()
-                    
-                    echo "Build Info:"
-                    echo "  Source: ${env.BUILD_SOURCE}"
-                    echo "  Branch: ${env.ACTUAL_BRANCH}"
-                    echo "  Commit: ${env.GIT_COMMIT_SHORT}"
-                    echo "  Tag: ${env.GIT_TAG ?: 'None'}"
+
+                    echo "Trigger Type: ${env.TRIGGER_TYPE}"
+                    echo "Branch: ${env.GIT_BRANCH ?: 'N/A'}"
+                    echo "Tag: ${env.GIT_TAG ?: 'N/A'}"
                 }
             }
         }
-        
+
+        /* ---------------- ENV DECISION ---------------- */
         stage('Determine Environment') {
             steps {
                 script {
-                    // Determine environment based on build source
-                    if (env.BUILD_SOURCE == "TAG") {
-                        // All tag builds go to production
-                        env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
-                        env.DEPLOYMENT_FILE = "prod-reports.yaml"
-                        env.DEPLOYMENT_NAME = "prod-reports-api"
-                        env.TAG_TYPE = "release"
-                        
-                        // Use the actual git tag for image tagging
-                        if (env.GIT_TAG) {
-                            env.TAG_FOR_DEPLOYMENT = env.GIT_TAG
-                        } else {
-                            error("Tag build but no git tag found!")
-                        }
-                        
-                    } else if (env.ACTUAL_BRANCH == "staging") {
+
+                    /* -------- STAGING -------- */
+                    if (env.TRIGGER_TYPE == "BRANCH" && env.GIT_BRANCH == "staging") {
+
                         env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "anrs125/reports-tesing"
                         env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
                         env.DEPLOYMENT_FILE = "staging-report.yaml"
                         env.DEPLOYMENT_NAME = "staging-reports-api"
-                        env.TAG_TYPE = "commit"
-                        env.TAG_FOR_DEPLOYMENT = "staging-${env.GIT_COMMIT_SHORT}"
-                        
-                    } else if (env.ACTUAL_BRANCH == "master") {
-                        // Master branch build (not from tag)
+                        env.IMAGE_TAG = "staging-" + sh(
+                            script: "git rev-parse --short HEAD",
+                            returnStdout: true
+                        ).trim()
+
+                    }
+
+                    /* -------- PRODUCTION (TAG ONLY) -------- */
+                    else if (env.TRIGGER_TYPE == "TAG") {
+
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "anrs125/reports-tesing"
                         env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
                         env.DEPLOYMENT_FILE = "prod-reports.yaml"
                         env.DEPLOYMENT_NAME = "prod-reports-api"
-                        env.TAG_TYPE = "release"
-                        
-                        // For master branch, check if there's a tag on current commit
-                        if (env.GIT_TAG) {
-                            env.TAG_FOR_DEPLOYMENT = env.GIT_TAG
-                        } else {
-                            error("Master branch build requires a git tag. Please tag the commit before building.")
-                        }
-                        
-                    } else {
-                        error("Unsupported branch: ${env.ACTUAL_BRANCH}")
+                        env.IMAGE_TAG = env.GIT_TAG
+
                     }
-                    
+
+                    /* -------- BLOCK EVERYTHING ELSE -------- */
+                    else {
+                        error("""
+❌ Build blocked
+
+Allowed triggers:
+- STAGING  → git push origin staging
+- PROD     → git push origin <tag>
+
+Detected:
+- Trigger : ${env.TRIGGER_TYPE}
+- Branch  : ${env.GIT_BRANCH ?: 'N/A'}
+- Tag     : ${env.GIT_TAG ?: 'N/A'}
+""")
+                    }
+
                     echo """
-                    Environment Info
-                    ----------------------
-                    Build Source:  ${env.BUILD_SOURCE}
-                    Branch:        ${env.ACTUAL_BRANCH}
-                    Deploy Env:    ${env.DEPLOY_ENV}
-                    Image:         ${env.IMAGE_NAME}
-                    Tag Type:      ${env.TAG_TYPE}
-                    Deployment:    ${env.DEPLOYMENT_NAME}
-                    Version Tag:   ${env.TAG_FOR_DEPLOYMENT}
-                    """
+✅ Deployment Approved
+---------------------
+Environment : ${env.DEPLOY_ENV}
+Image       : ${env.IMAGE_NAME}
+Tag         : ${env.IMAGE_TAG}
+"""
                 }
             }
         }
-        
-        stage('Generate Docker Tag') {
-            steps {
-                script {
-                    if (params.ROLLBACK) {
-                        if (!params.TARGET_VERSION?.trim()) {
-                            error("Rollback requested but no TARGET_VERSION provided.")
-                        }
-                        env.IMAGE_TAG = params.TARGET_VERSION.trim()
-                    } else {
-                        // Use the tag determined in previous stage
-                        env.IMAGE_TAG = env.TAG_FOR_DEPLOYMENT
-                    }
-                    
-                    echo ":rocket: FINAL Docker Tag: ${env.IMAGE_TAG}"
-                }
-            }
-        }
-        
+
+        /* ---------------- DOCKER LOGIN ---------------- */
         stage('Docker Login') {
             steps {
-                script {
-                    withCredentials([usernamePassword(
-                        credentialsId: env.DOCKER_CREDENTIALS_ID,
-                        usernameVariable: 'DOCKER_USER', 
-                        passwordVariable: 'DOCKER_PASSWORD'
-                    )]) {
-                        sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
-                    }
+                withCredentials([usernamePassword(
+                    credentialsId: env.DOCKER_CREDENTIALS_ID,
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh "echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin"
                 }
             }
         }
-        
+
+        /* ---------------- BUILD & PUSH ---------------- */
         stage('Docker Build & Push') {
-            when { 
-                expression { 
-                    return !params.ROLLBACK 
-                } 
-            }
             steps {
                 script {
-                    def imageFull = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    echo "Building Docker image: ${imageFull}"
-                    
-                    // Build with build args if needed
+                    def image = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
                     sh """
-                        docker build \
-                            --pull \
-                            --no-cache \
-                            -t ${imageFull} \
-                            --build-arg GIT_COMMIT=${env.GIT_COMMIT} \
-                            --build-arg VERSION=${env.IMAGE_TAG} \
-                            .
-                        
-                        docker push ${imageFull}
+                        docker build --no-cache -t ${image} .
+                        docker push ${image}
+                        docker logout
                     """
-                    
-                    // Also tag as latest for production
-                    if (env.DEPLOY_ENV == "production") {
-                        def latestTag = "${env.IMAGE_NAME}:latest"
-                        sh """
-                            docker tag ${imageFull} ${latestTag}
-                            docker push ${latestTag}
-                        """
-                        echo "✅ Also pushed as 'latest'"
-                    }
-                    
-                    sh "docker logout"
                 }
-            }
-        }
-        
-        // Add more stages for testing, deployment, etc.
-    }
-    
-    post {
-        success {
-            script {
-                echo "✅ Build ${env.BUILD_NUMBER} completed successfully!"
-                echo "📦 Image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                echo "🌍 Environment: ${env.DEPLOY_ENV}"
-            }
-        }
-        failure {
-            script {
-                echo "❌ Build ${env.BUILD_NUMBER} failed!"
             }
         }
     }
