@@ -37,6 +37,7 @@ pipeline {
       You may replace this with GitHub webhook later.
     */
     triggers {
+        githubPush()
         pollSCM('H/5 * * * *')
     }
 
