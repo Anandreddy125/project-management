@@ -15,9 +15,9 @@
         booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION instead of deploy')
         string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target Docker tag for rollback (if enabled)')
     }
-    triggers {
-        githubPush()
-    }
+    //triggers {
+       // githubPush()
+   // }
     stages {
         stage('Clean Workspace') {
             steps { cleanWs() }
@@ -125,3 +125,4 @@
 	}
 }
 //testing 
+// comment triggers staging on jenkinsfile for testing.
