@@ -14,8 +14,16 @@ pipeline {
     }
 
     parameters {
-        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback using TARGET_VERSION')
-        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Docker tag for rollback')
+        booleanParam(
+            name: 'ROLLBACK',
+            defaultValue: false,
+            description: 'Rollback using TARGET_VERSION'
+        )
+        string(
+            name: 'TARGET_VERSION',
+            defaultValue: '',
+            description: 'Docker image tag for rollback'
+        )
     }
 
     triggers {
@@ -24,21 +32,16 @@ pipeline {
 
     stages {
 
-        /* ================= PRE-CHECK ================= */
+        /* ================= SAFETY CHECK ================= */
         stage('Validate Trigger') {
             steps {
                 script {
-                    echo "BRANCH_NAME=${env.BRANCH_NAME}"
-                    echo "TAG_NAME=${env.TAG_NAME}"
+                    echo "BRANCH_NAME = ${env.BRANCH_NAME}"
+                    echo "TAG_NAME    = ${env.TAG_NAME}"
 
-                    // ❌ Block master branch normal push
+                    // ❌ Block master normal push
                     if (env.BRANCH_NAME == "master" && !env.TAG_NAME) {
-                        error("❌ Master branch push detected. Only TAG pushes are allowed for production.")
-                    }
-
-                    // ❌ Block tag builds not from master
-                    if (env.TAG_NAME && !env.TAG_NAME.startsWith("v")) {
-                        error("❌ Invalid tag format. Expected vX.Y.Z")
+                        error("❌ Master branch push is blocked. Use Git TAG for production deployment.")
                     }
                 }
             }
@@ -57,10 +60,12 @@ pipeline {
                                 credentialsId: env.GIT_CREDENTIALS_ID
                             ]]
                         ])
-                        env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.DEPLOYMENT_FILE = "prod-reports.yaml"
-                        env.DEPLOYMENT_NAME = "prod-reports-api"
+
+                        env.DEPLOY_ENV       = "production"
+                        env.IMAGE_NAME       = "anrs125/reports-tesing"
+                        env.DEPLOYMENT_FILE  = "prod-reports.yaml"
+                        env.DEPLOYMENT_NAME  = "prod-reports-api"
+
                     } else {
                         echo "🌱 Checking out BRANCH: ${env.BRANCH_NAME}"
                         checkout([$class: 'GitSCM',
@@ -70,26 +75,29 @@ pipeline {
                                 credentialsId: env.GIT_CREDENTIALS_ID
                             ]]
                         ])
-                        env.DEPLOY_ENV = "staging"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.DEPLOYMENT_FILE = "staging-report.yaml"
-                        env.DEPLOYMENT_NAME = "staging-reports-api"
+
+                        env.DEPLOY_ENV       = "staging"
+                        env.IMAGE_NAME       = "anrs125/reports-tesing"
+                        env.DEPLOYMENT_FILE  = "staging-report.yaml"
+                        env.DEPLOYMENT_NAME  = "staging-reports-api"
                     }
                 }
             }
         }
 
-        /* ================= TAG GENERATION ================= */
+        /* ================= IMAGE TAG ================= */
         stage('Generate Docker Tag') {
             steps {
                 script {
                     if (params.ROLLBACK) {
                         if (!params.TARGET_VERSION?.trim()) {
-                            error("Rollback enabled but TARGET_VERSION is empty")
+                            error("❌ Rollback enabled but TARGET_VERSION is empty")
                         }
                         env.IMAGE_TAG = params.TARGET_VERSION
+
                     } else if (env.TAG_NAME) {
                         env.IMAGE_TAG = env.TAG_NAME
+
                     } else {
                         def commitId = sh(
                             script: "git rev-parse --short HEAD",
@@ -98,12 +106,12 @@ pipeline {
                         env.IMAGE_TAG = "staging-${commitId}"
                     }
 
-                    echo "🚀 Docker Image Tag: ${env.IMAGE_TAG}"
+                    echo "🚀 Final Docker Image Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        /* ================= DOCKER ================= */
+        /* ================= DOCKER LOGIN ================= */
         stage('Docker Login') {
             steps {
                 withCredentials([usernamePassword(
@@ -116,6 +124,7 @@ pipeline {
             }
         }
 
+        /* ================= BUILD & PUSH ================= */
         stage('Docker Build & Push') {
             when {
                 expression { return !params.ROLLBACK }
@@ -123,6 +132,8 @@ pipeline {
             steps {
                 script {
                     def image = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    echo "📦 Building image: ${image}"
+
                     sh """
                         docker build --no-cache -t ${image} .
                         docker push ${image}
