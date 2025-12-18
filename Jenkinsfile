@@ -8,37 +8,35 @@ pipeline {
     }
 
     environment {
-        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
 
-        STAGING_IMAGE    = "anrs125/reports-testing"
-        PRODUCTION_IMAGE = "anrs125/reports-testing"
+        STAGING_IMAGE    = "anrs125/reports-staging"
+        PRODUCTION_IMAGE = "anrs125/reports-staging"
     }
 
     stages {
 
         /* ===================== CONTEXT ===================== */
-        stage('Detect Context') {
+        stage('Detect Build Context') {
             steps {
                 script {
-                    env.IS_TAG = (env.GIT_BRANCH?.startsWith("refs/tags/")) ? "true" : "false"
+                    env.IS_TAG = env.GIT_BRANCH?.startsWith("refs/tags/") ? "true" : "false"
                     env.TAG_NAME = env.IS_TAG == "true"
                         ? env.GIT_BRANCH.replace("refs/tags/", "")
                         : ""
 
                     echo """
-                    ===== BUILD CONTEXT =====
+                    ===========================
                     BRANCH_NAME : ${env.BRANCH_NAME}
                     GIT_BRANCH  : ${env.GIT_BRANCH}
                     IS_TAG      : ${env.IS_TAG}
                     TAG_NAME    : ${env.TAG_NAME}
-                    =========================
+                    ===========================
                     """
 
                     // 🚫 Block master branch push
                     if (env.BRANCH_NAME == "master" && env.IS_TAG == "false") {
-                        error("❌ Master branch push is blocked. Use TAG for production deployment.")
+                        error("❌ Master branch push blocked. Use TAG for production.")
                     }
 
                     // 🚫 Block unsupported branches
@@ -61,8 +59,8 @@ pipeline {
             }
         }
 
-        /* ===================== TAG GENERATION ===================== */
-        stage('Generate Image Tag') {
+        /* ===================== IMAGE TAG ===================== */
+        stage('Generate Docker Tag') {
             steps {
                 script {
                     def commitId = sh(
@@ -71,16 +69,16 @@ pipeline {
                     ).trim()
 
                     if (env.IS_TAG == "true") {
-                        env.IMAGE_TAG  = env.TAG_NAME
                         env.IMAGE_NAME = env.PRODUCTION_IMAGE
+                        env.IMAGE_TAG  = env.TAG_NAME
                         env.DEPLOY_ENV = "production"
                     } else {
-                        env.IMAGE_TAG  = "staging-${commitId}"
                         env.IMAGE_NAME = env.STAGING_IMAGE
+                        env.IMAGE_TAG  = "staging-${commitId}"
                         env.DEPLOY_ENV = "staging"
                     }
 
-                    echo "🚀 IMAGE: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+                    echo "🚀 IMAGE → ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
                 }
             }
         }
@@ -138,3 +136,5 @@ pipeline {
         }
     }
 }
+
+//error
