@@ -1,126 +1,150 @@
- pipeline {
+pipeline {
     agent any
+
     options {
         disableConcurrentBuilds()
         timestamps()
         timeout(time: 60, unit: 'MINUTES')
+        skipDefaultCheckout(true)
     }
+
     environment {
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
+        IMAGE_NAME            = "anrs125/reports-tesing"
     }
+
     parameters {
-        choice(name: 'BRANCH_PARAM', choices: ['staging', 'master'], description: 'Select branch to build manually')
-        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Rollback to TARGET_VERSION instead of deploy')
-        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target Docker tag for rollback (if enabled)')
+        booleanParam(
+            name: 'ROLLBACK',
+            defaultValue: false,
+            description: 'Rollback using TARGET_VERSION'
+        )
+        string(
+            name: 'TARGET_VERSION',
+            defaultValue: '',
+            description: 'Docker tag for rollback'
+        )
     }
-    triggers {
-        githubPush()
-    }
+
     stages {
+
+        /* ---------------- CLEAN ---------------- */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
+
+        /* ---------------- CHECKOUT ---------------- */
         stage('Checkout Code') {
             steps {
-                script {
-                    def branchName = env.BRANCH_NAME ?: params.BRANCH_PARAM
-                    echo ":small_blue_diamond: Checking out branch: ${branchName}"
-                    checkout([$class: 'GitSCM',
-                        branches: [[name: "*/${branchName}"]],
-                        userRemoteConfigs: [[
-                            url: env.GIT_REPO,
-                            credentialsId: env.GIT_CREDENTIALS_ID
-                        ]]
-                    ])
-                    env.ACTUAL_BRANCH = branchName
-                }
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "${env.GIT_BRANCH}"]],
+                    userRemoteConfigs: [[
+                        url: env.GIT_REPO,
+                        credentialsId: env.GIT_CREDENTIALS_ID,
+                        refspec: '+refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/remotes/origin/tags/*'
+                    ]]
+                ])
             }
         }
-        stage('Determine Environment') {
+
+        /* ---------------- DETECT BRANCH OR TAG ---------------- */
+        stage('Detect Ref Type') {
             steps {
                 script {
-                    if (env.ACTUAL_BRANCH == "staging") {
-                        env.DEPLOY_ENV = "staging"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
-                        env.DEPLOYMENT_FILE = "staging-report.yaml"
-                        env.DEPLOYMENT_NAME = "staging-reports-api"
-                        env.TAG_TYPE = "commit"
-                    } else if (env.ACTUAL_BRANCH == "master") {
+                    echo "GIT_BRANCH = ${env.GIT_BRANCH}"
+
+                    if (env.GIT_BRANCH.startsWith("origin/tags/")) {
+                        env.TAG_TYPE = "release"
+                        env.TAG_NAME = env.GIT_BRANCH.replace("origin/tags/", "")
                         env.DEPLOY_ENV = "production"
-                        env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
                         env.DEPLOYMENT_FILE = "prod-reports.yaml"
                         env.DEPLOYMENT_NAME = "prod-reports-api"
-                        env.TAG_TYPE = "release"
-                    } else {
-                        error("Unsupported branch: ${env.ACTUAL_BRANCH}")
                     }
+                    else if (env.GIT_BRANCH == "origin/staging") {
+                        env.TAG_TYPE = "commit"
+                        env.DEPLOY_ENV = "staging"
+                        env.DEPLOYMENT_FILE = "staging-report.yaml"
+                        env.DEPLOYMENT_NAME = "staging-reports-api"
+                    }
+                    else {
+                        error("Unsupported branch or ref: ${env.GIT_BRANCH}")
+                    }
+
                     echo """
-                    Environment Info
-                    ----------------------
-                    Branch: ${env.ACTUAL_BRANCH}
-                    Deploy: ${env.DEPLOY_ENV}
-                    Repo:   ${env.IMAGE_NAME}
-                    Mode:   ${env.TAG_TYPE}
-                    Namespace: ${env.NAMESPACE}
-                    Deployment File: ${env.DEPLOYMENT_FILE}
+                    ===== Deployment Info =====
+                    Ref Type   : ${env.TAG_TYPE}
+                    Environment: ${env.DEPLOY_ENV}
+                    Tag Name   : ${env.TAG_NAME ?: 'N/A'}
+                    ===========================
                     """
                 }
             }
         }
+
+        /* ---------------- GENERATE DOCKER TAG ---------------- */
         stage('Generate Docker Tag') {
             steps {
                 script {
-                    def commitId = sh(script: "git rev-parse HEAD | cut -c1-7", returnStdout: true).trim()
-                    def imageTag = ""
                     if (params.ROLLBACK) {
                         if (!params.TARGET_VERSION?.trim()) {
-                            error("Rollback requested but no TARGET_VERSION provided.")
+                            error("Rollback requested but TARGET_VERSION is empty")
                         }
-                        imageTag = params.TARGET_VERSION.trim()
-                    } else if (env.TAG_TYPE == "commit") {
-                        imageTag = "staging-${commitId}"
-                    } else if (env.TAG_TYPE == "release") {
-                        def tagName = sh(
-                            script: "git describe --tags --exact-match HEAD 2>/dev/null || true",
+                        env.IMAGE_TAG = params.TARGET_VERSION.trim()
+                    }
+                    else if (env.TAG_TYPE == "release") {
+                        env.IMAGE_TAG = env.TAG_NAME
+                    }
+                    else {
+                        def commitId = sh(
+                            script: "git rev-parse --short HEAD",
                             returnStdout: true
                         ).trim()
-                        if (!tagName) {
-                          error("Tag not found. Stopping build.")
-                        }
-                        imageTag = tagName
+                        env.IMAGE_TAG = "staging-${commitId}"
                     }
-                    env.IMAGE_TAG = imageTag
-                    echo ":rocket: FINAL Docker Tag: ${env.IMAGE_TAG}"
+
+                    echo "Docker Image Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
+
+        /* ---------------- DOCKER LOGIN ---------------- */
         stage('Docker Login') {
+            when { expression { !params.ROLLBACK } }
             steps {
-                script {
-                    withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID,
-                        usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASSWORD')]) {
-                        sh "echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USER} --password-stdin"
-                    }
+                withCredentials([usernamePassword(
+                    credentialsId: env.DOCKER_CREDENTIALS_ID,
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
                 }
             }
         }
+
+        /* ---------------- BUILD & PUSH ---------------- */
         stage('Docker Build & Push') {
-            when { expression { return !params.ROLLBACK } }
+            when { expression { !params.ROLLBACK } }
             steps {
                 script {
-                    def imageFull = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    echo "Building Docker image: ${imageFull}"
                     sh """
-                        docker build --pull --no-cache -t ${imageFull} .
-                        docker push ${imageFull}
+                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                        docker logout
                     """
-                    sh "docker logout"
                 }
             }
         }
-	}
+    }
+
+    post {
+        success {
+            echo "Deployment successful for ${DEPLOY_ENV}"
+        }
+        failure {
+            echo "Deployment failed"
+        }
+    }
 }
