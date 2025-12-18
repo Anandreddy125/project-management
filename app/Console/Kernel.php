@@ -47,3 +47,4 @@ class Kernel extends ConsoleKernel final test for docker build image
 //Even if Jenkins was triggered by master, you force checkout of staging.
 //testing with farhan 
 // testing behaviour
+// tetsing refs/tags/ on jenkins multibranch
