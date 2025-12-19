@@ -171,3 +171,6 @@ pipeline {
         }
     }
 }
+
+
+//installed plugin for Branch Build Strategies
