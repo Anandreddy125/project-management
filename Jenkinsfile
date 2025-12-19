@@ -173,4 +173,4 @@ pipeline {
 }
 
 
-//installed plugin for Branch Build Strategies automaticaly no triggered.
+//installed plugin for Branch Build Strategies automaticaly no triggered. and i chnaged webhook configuration for the testing.
