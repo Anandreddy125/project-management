@@ -8,7 +8,6 @@ pipeline {
     }
 
     environment {
-        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
     }
@@ -22,24 +21,17 @@ pipeline {
         string(
             name: 'TARGET_VERSION',
             defaultValue: '',
-            description: 'Docker tag to rollback'
+            description: 'Docker image tag for rollback'
         )
     }
-    
-    triggers {
-			githubPush()
-		}
 
     stages {
-
-        /* ---------------- CLEAN ---------------- */
         stage('Clean Workspace') {
             steps {
                 cleanWs()
             }
         }
 
-        /* ---------------- CHECKOUT ---------------- */
         stage('Checkout Code') {
             steps {
                 checkout scm
@@ -50,12 +42,11 @@ pipeline {
             }
         }
 
-        /* ---------------- ENV DECISION ---------------- */
         stage('Determine Environment') {
             steps {
                 script {
 
-                    /* ---------- STAGING (branch push) ---------- */
+                    /* ---------- STAGING: normal branch push ---------- */
                     if (env.BRANCH_NAME == "staging" && !env.TAG_NAME) {
 
                         env.DEPLOY_ENV = "staging"
@@ -65,7 +56,7 @@ pipeline {
                         env.DEPLOYMENT_NAME = "staging-reports-api"
                         env.TAG_TYPE = "commit"
 
-                    /* ---------- PRODUCTION (tag push on master) ---------- */
+                    /* ---------- PRODUCTION: tag push on master ---------- */
                     } else if (env.TAG_NAME) {
 
                         env.DEPLOY_ENV = "production"
@@ -75,11 +66,10 @@ pipeline {
                         env.DEPLOYMENT_NAME = "prod-reports-api"
                         env.TAG_TYPE = "release"
 
-                    /* ---------- BLOCK MASTER PUSH WITHOUT TAG ---------- */
+                    /* ---------- BLOCK MASTER WITHOUT TAG ---------- */
                     } else if (env.BRANCH_NAME == "master") {
-
                         error("""
-❌ Direct master branch push detected.
+❌ Direct master push detected.
 
 Production deployments are allowed ONLY via tags.
 
@@ -89,19 +79,8 @@ Correct flow:
   git tag vX.Y.Z
   git push origin vX.Y.Z
 """)
-
-                    /* ---------- BLOCK EVERYTHING ELSE ---------- */
                     } else {
-                        error("""
-❌ Unsupported trigger
-
-Branch : ${env.BRANCH_NAME}
-Tag    : ${env.TAG_NAME ?: "N/A"}
-
-Allowed:
-✔ git push origin staging
-✔ git push origin vX.Y.Z
-""")
+                        error("❌ Unsupported branch: ${env.BRANCH_NAME}")
                     }
 
                     echo """
@@ -111,7 +90,7 @@ Allowed:
  Branch     : ${env.BRANCH_NAME}
  Tag        : ${env.TAG_NAME ?: "N/A"}
  Deploy Env : ${env.DEPLOY_ENV}
- Tag Type   : ${env.TAG_TYPE}
+ Image      : ${env.IMAGE_NAME}
  Deployment : ${env.DEPLOYMENT_NAME}
 =============================
 """
@@ -119,19 +98,15 @@ Allowed:
             }
         }
 
-        /* ---------------- TAG GENERATION ---------------- */
         stage('Generate Docker Tag') {
             steps {
                 script {
 
-                    def imageTag = ""
-
                     if (params.ROLLBACK) {
-
                         if (!params.TARGET_VERSION?.trim()) {
-                            error("Rollback enabled but TARGET_VERSION is empty")
+                            error("Rollback requested but TARGET_VERSION is empty")
                         }
-                        imageTag = params.TARGET_VERSION.trim()
+                        env.IMAGE_TAG = params.TARGET_VERSION.trim()
 
                     } else if (env.TAG_TYPE == "commit") {
 
@@ -139,48 +114,32 @@ Allowed:
                             script: "git rev-parse --short HEAD",
                             returnStdout: true
                         ).trim()
-                        imageTag = "staging-${commitId}"
+                        env.IMAGE_TAG = "staging-${commitId}"
 
-                    } else if (env.TAG_TYPE == "release") {
-
-                        imageTag = env.TAG_NAME
+                    } else {
+                        env.IMAGE_TAG = env.TAG_NAME
                     }
 
-                    env.IMAGE_TAG = imageTag
-                    echo "🚀 FINAL DOCKER TAG: ${env.IMAGE_TAG}"
+                    echo "🚀 FINAL IMAGE TAG: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        /* ---------------- DOCKER LOGIN ---------------- */
-        stage('Docker Login') {
+        /* ---------------- DOCKER BUILD & PUSH ---------------- */
+        stage('Docker Build & Push') {
+            when { expression { !params.ROLLBACK } }
             steps {
                 withCredentials([
                     usernamePassword(
                         credentialsId: env.DOCKER_CREDENTIALS_ID,
                         usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASSWORD'
+                        passwordVariable: 'DOCKER_PASS'
                     )
                 ]) {
                     sh """
-                        echo "${DOCKER_PASSWORD}" | docker login \
-                        -u "${DOCKER_USER}" --password-stdin
-                    """
-                }
-            }
-        }
-
-        /* ---------------- BUILD & PUSH ---------------- */
-        stage('Docker Build & Push') {
-            when {
-                expression { return !params.ROLLBACK }
-            }
-            steps {
-                script {
-                    def imageFull = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-                    sh """
-                        docker build --no-cache -t ${imageFull} .
-                        docker push ${imageFull}
+                        echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+                        docker build --no-cache -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} .
+                        docker push ${env.IMAGE_NAME}:${env.IMAGE_TAG}
                         docker logout
                     """
                 }
@@ -188,5 +147,3 @@ Allowed:
         }
     }
 }
-
-//test auto trigger.
