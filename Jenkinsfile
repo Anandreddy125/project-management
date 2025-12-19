@@ -17,12 +17,12 @@ pipeline {
         booleanParam(
             name: 'ROLLBACK',
             defaultValue: false,
-            description: 'Rollback to TARGET_VERSION'
+            description: 'Rollback using TARGET_VERSION'
         )
         string(
             name: 'TARGET_VERSION',
             defaultValue: '',
-            description: 'Docker tag for rollback'
+            description: 'Docker tag to rollback'
         )
     }
 
@@ -41,7 +41,7 @@ pipeline {
                 checkout scm
                 script {
                     echo "BRANCH_NAME = ${env.BRANCH_NAME}"
-                    echo "TAG_NAME    = ${env.TAG_NAME}"
+                    echo "TAG_NAME    = ${env.TAG_NAME ?: 'N/A'}"
                 }
             }
         }
@@ -51,8 +51,8 @@ pipeline {
             steps {
                 script {
 
-                    /* ---------- STAGING ---------- */
-                    if (env.BRANCH_NAME == "staging") {
+                    /* ---------- STAGING (branch push) ---------- */
+                    if (env.BRANCH_NAME == "staging" && !env.TAG_NAME) {
 
                         env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "anrs125/reports-tesing"
@@ -61,17 +61,8 @@ pipeline {
                         env.DEPLOYMENT_NAME = "staging-reports-api"
                         env.TAG_TYPE = "commit"
 
-                    /* ---------- PRODUCTION (TAG ONLY) ---------- */
-                    } else if (env.BRANCH_NAME == "master") {
-
-                        if (!env.TAG_NAME) {
-                            error("""
-❌ Production builds are allowed ONLY via git tags.
-👉 Example:
-   git tag v1.0.40
-   git push origin v1.0.40
-""")
-                        }
+                    /* ---------- PRODUCTION (tag push on master) ---------- */
+                    } else if (env.TAG_NAME) {
 
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "anrs125/reports-tesing"
@@ -80,20 +71,44 @@ pipeline {
                         env.DEPLOYMENT_NAME = "prod-reports-api"
                         env.TAG_TYPE = "release"
 
+                    /* ---------- BLOCK MASTER PUSH WITHOUT TAG ---------- */
+                    } else if (env.BRANCH_NAME == "master") {
+
+                        error("""
+❌ Direct master branch push detected.
+
+Production deployments are allowed ONLY via tags.
+
+Correct flow:
+  git checkout master
+  git merge staging
+  git tag vX.Y.Z
+  git push origin vX.Y.Z
+""")
+
+                    /* ---------- BLOCK EVERYTHING ELSE ---------- */
                     } else {
-                        error("Unsupported branch: ${env.BRANCH_NAME}")
+                        error("""
+❌ Unsupported trigger
+
+Branch : ${env.BRANCH_NAME}
+Tag    : ${env.TAG_NAME ?: "N/A"}
+
+Allowed:
+✔ git push origin staging
+✔ git push origin vX.Y.Z
+""")
                     }
 
                     echo """
 =============================
  Environment Summary
 =============================
- Branch       : ${env.BRANCH_NAME}
- Tag          : ${env.TAG_NAME ?: "N/A"}
- Deploy Env   : ${env.DEPLOY_ENV}
- Image        : ${env.IMAGE_NAME}
- Tag Type     : ${env.TAG_TYPE}
- Deployment   : ${env.DEPLOYMENT_NAME}
+ Branch     : ${env.BRANCH_NAME}
+ Tag        : ${env.TAG_NAME ?: "N/A"}
+ Deploy Env : ${env.DEPLOY_ENV}
+ Tag Type   : ${env.TAG_TYPE}
+ Deployment : ${env.DEPLOYMENT_NAME}
 =============================
 """
                 }
@@ -120,7 +135,6 @@ pipeline {
                             script: "git rev-parse --short HEAD",
                             returnStdout: true
                         ).trim()
-
                         imageTag = "staging-${commitId}"
 
                     } else if (env.TAG_TYPE == "release") {
@@ -160,7 +174,6 @@ pipeline {
             steps {
                 script {
                     def imageFull = "${env.IMAGE_NAME}:${env.IMAGE_TAG}"
-
                     sh """
                         docker build --no-cache -t ${imageFull} .
                         docker push ${imageFull}
@@ -171,6 +184,3 @@ pipeline {
         }
     }
 }
-
-
-//installed plugin for Branch Build Strategies automaticaly no triggered. and i chnaged webhook configuration for the testing.
