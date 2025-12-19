@@ -25,6 +25,10 @@ pipeline {
             description: 'Docker tag to rollback'
         )
     }
+    
+    triggers {
+			githubPush()
+		}
 
     stages {
 
