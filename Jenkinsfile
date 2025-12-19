@@ -27,8 +27,8 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    echo "🔹 BRANCH_NAME = ${env.BRANCH_NAME}"
-                    echo "🔹 TAG_NAME    = ${env.TAG_NAME ?: 'N/A'}"
+                    echo "BRANCH_NAME = ${env.BRANCH_NAME}"
+                    echo "TAG_NAME    = ${env.TAG_NAME ?: 'N/A'}"
                 }
             }
         }
@@ -38,33 +38,30 @@ pipeline {
             steps {
                 script {
 
-                    /* ---------- STAGING (branch push) ---------- */
+                    /* -------- STAGING (branch push) -------- */
                     if (env.BRANCH_NAME == "staging" && !env.TAG_NAME) {
-
                         env.DEPLOY_ENV = "staging"
                         env.TAG_TYPE   = "commit"
 
-                    /* ---------- PRODUCTION (tag push) ---------- */
+                    /* -------- PRODUCTION (tag push) -------- */
                     } else if (env.TAG_NAME) {
-
                         env.DEPLOY_ENV = "production"
                         env.TAG_TYPE   = "release"
 
-                    /* ---------- BLOCK MASTER WITHOUT TAG ---------- */
+                    /* -------- BLOCK MASTER WITHOUT TAG -------- */
                     } else if (env.BRANCH_NAME == "master") {
-
                         error("""
-❌ Direct master push blocked.
+❌ Direct master push detected.
 
-Production deployments are allowed ONLY via Git tags.
+Production deployments are allowed ONLY via tags.
 
-Correct workflow:
+Correct flow:
   git checkout master
   git merge staging
+  git push origin master
   git tag vX.Y.Z
   git push origin vX.Y.Z
 """)
-
                     } else {
                         error("❌ Unsupported branch: ${env.BRANCH_NAME}")
                     }
@@ -87,19 +84,17 @@ Correct workflow:
             steps {
                 script {
                     if (env.TAG_TYPE == "commit") {
-
                         def commitId = sh(
                             script: "git rev-parse --short HEAD",
                             returnStdout: true
                         ).trim()
 
                         env.IMAGE_TAG = "staging-${commitId}"
-
                     } else {
                         env.IMAGE_TAG = env.TAG_NAME
                     }
 
-                    echo "🚀 FINAL DOCKER IMAGE: ${env.IMAGE_REPO}:${env.IMAGE_TAG}"
+                    echo "FINAL IMAGE: ${env.IMAGE_REPO}:${env.IMAGE_TAG}"
                 }
             }
         }
@@ -137,5 +132,3 @@ Correct workflow:
         }
     }
 }
-
-//changed jenkinsfile
