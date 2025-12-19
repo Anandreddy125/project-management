@@ -12,26 +12,16 @@ pipeline {
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
     }
 
-    parameters {
-        booleanParam(
-            name: 'ROLLBACK',
-            defaultValue: false,
-            description: 'Rollback using TARGET_VERSION'
-        )
-        string(
-            name: 'TARGET_VERSION',
-            defaultValue: '',
-            description: 'Docker image tag for rollback'
-        )
-    }
-
     stages {
+
+        /* ---------------- CLEAN ---------------- */
         stage('Clean Workspace') {
             steps {
                 cleanWs()
             }
         }
 
+        /* ---------------- CHECKOUT ---------------- */
         stage('Checkout Code') {
             steps {
                 checkout scm
@@ -42,31 +32,26 @@ pipeline {
             }
         }
 
+        /* ---------------- ENVIRONMENT DECISION ---------------- */
         stage('Determine Environment') {
             steps {
                 script {
 
-                    /* ---------- STAGING: normal branch push ---------- */
+                    /* STAGING: branch push */
                     if (env.BRANCH_NAME == "staging" && !env.TAG_NAME) {
 
                         env.DEPLOY_ENV = "staging"
                         env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.KUBERNETES_CREDENTIALS_ID = "reports-staging"
-                        env.DEPLOYMENT_FILE = "staging-report.yaml"
-                        env.DEPLOYMENT_NAME = "staging-reports-api"
                         env.TAG_TYPE = "commit"
 
-                    /* ---------- PRODUCTION: tag push on master ---------- */
+                    /* PRODUCTION: tag push */
                     } else if (env.TAG_NAME) {
 
                         env.DEPLOY_ENV = "production"
                         env.IMAGE_NAME = "anrs125/reports-tesing"
-                        env.KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
-                        env.DEPLOYMENT_FILE = "prod-reports.yaml"
-                        env.DEPLOYMENT_NAME = "prod-reports-api"
                         env.TAG_TYPE = "release"
 
-                    /* ---------- BLOCK MASTER WITHOUT TAG ---------- */
+                    /* BLOCK master without tag */
                     } else if (env.BRANCH_NAME == "master") {
                         error("""
 ❌ Direct master push detected.
@@ -91,24 +76,17 @@ Correct flow:
  Tag        : ${env.TAG_NAME ?: "N/A"}
  Deploy Env : ${env.DEPLOY_ENV}
  Image      : ${env.IMAGE_NAME}
- Deployment : ${env.DEPLOYMENT_NAME}
 =============================
 """
                 }
             }
         }
 
+        /* ---------------- IMAGE TAG ---------------- */
         stage('Generate Docker Tag') {
             steps {
                 script {
-
-                    if (params.ROLLBACK) {
-                        if (!params.TARGET_VERSION?.trim()) {
-                            error("Rollback requested but TARGET_VERSION is empty")
-                        }
-                        env.IMAGE_TAG = params.TARGET_VERSION.trim()
-
-                    } else if (env.TAG_TYPE == "commit") {
+                    if (env.TAG_TYPE == "commit") {
 
                         def commitId = sh(
                             script: "git rev-parse --short HEAD",
@@ -127,7 +105,6 @@ Correct flow:
 
         /* ---------------- DOCKER BUILD & PUSH ---------------- */
         stage('Docker Build & Push') {
-            when { expression { !params.ROLLBACK } }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -144,6 +121,12 @@ Correct flow:
                     """
                 }
             }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
         }
     }
 }
