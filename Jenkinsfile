@@ -12,6 +12,10 @@ pipeline {
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
     }
 
+    triggers {
+			githubPush()
+		}
+
     stages {
 
         /* ---------------- CLEAN ---------------- */
