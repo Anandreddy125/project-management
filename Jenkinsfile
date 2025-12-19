@@ -173,4 +173,4 @@ pipeline {
 }
 
 
-//installed plugin for Branch Build Strategies
+//installed plugin for Branch Build Strategies automaticaly no triggered.
