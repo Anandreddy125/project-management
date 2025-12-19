@@ -184,3 +184,5 @@ Allowed:
         }
     }
 }
+
+//test auto trigger.
