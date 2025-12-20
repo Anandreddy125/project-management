@@ -17,24 +17,30 @@ pipeline {
 
     stages {
 
+        /* ================= VALIDATE TAG ================= */
         stage('Validate Tag') {
             steps {
                 script {
-                    if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
-                        error("❌ This job runs ONLY for git tags")
+                    if (!env.GIT_BRANCH) {
+                        error("❌ GIT_BRANCH not set. This job must be triggered by Git")
+                    }
+
+                    if (!env.GIT_BRANCH.startsWith("refs/tags/")) {
+                        error("❌ This pipeline runs ONLY for git tags")
                     }
 
                     env.TAG_NAME = env.GIT_BRANCH.replace("refs/tags/", "")
 
                     if (!env.TAG_NAME.matches(/^v\\d+\\.\\d+\\.\\d+$/)) {
-                        error("❌ Invalid tag format: ${env.TAG_NAME}")
+                        error("❌ Invalid tag format: ${env.TAG_NAME}. Expected vX.Y.Z")
                     }
 
-                    echo "✅ Building PRODUCTION release: ${env.TAG_NAME}"
+                    echo "✅ Production release detected: ${env.TAG_NAME}"
                 }
             }
         }
 
+        /* ================= CHECKOUT TAG ================= */
         stage('Checkout Tag') {
             steps {
                 checkout([
@@ -48,7 +54,8 @@ pipeline {
             }
         }
 
-        stage('Build & Push Image') {
+        /* ================= BUILD & PUSH ================= */
+        stage('Build & Push Docker Image') {
             steps {
                 withCredentials([
                     usernamePassword(
@@ -58,29 +65,33 @@ pipeline {
                     )
                 ]) {
                     sh """
-                        echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-                        docker build -t ${env.IMAGE_REPO}:${env.TAG_NAME} .
-                        docker push ${env.IMAGE_REPO}:${env.TAG_NAME}
+                        echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
+                        docker build -t ${IMAGE_REPO}:${TAG_NAME} .
+                        docker push ${IMAGE_REPO}:${TAG_NAME}
                         docker logout
                     """
                 }
             }
         }
 
+        /* ================= DEPLOY ================= */
         stage('Deploy to Production') {
             steps {
-                echo "🔥 Deploying ${env.TAG_NAME} to PRODUCTION"
-                // kubectl apply / helm upgrade / argocd sync
+                echo "🔥 Deploying ${TAG_NAME} to PRODUCTION"
+                // Example:
+                // helm upgrade reports ./helm --set image.tag=${TAG_NAME}
+                // OR
+                // argocd app sync reports-prod
             }
         }
     }
 
     post {
         success {
-            echo "✅ PRODUCTION deployment successful for ${env.TAG_NAME}"
+            echo "✅ PRODUCTION deployment successful for ${TAG_NAME}"
         }
         failure {
-            echo "❌ PRODUCTION deployment failed"
+            echo "❌ PRODUCTION deployment failed for ${TAG_NAME}"
         }
         always {
             cleanWs()
