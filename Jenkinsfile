@@ -15,98 +15,36 @@ pipeline {
 
     stages {
 
-        /* ================= CLEAN ================= */
-        stage('Clean Workspace') {
-            steps {
-                cleanWs()
-            }
-        }
-
-        /* ================= CHECKOUT ================= */
-        stage('Checkout Code') {
-            steps {
-                checkout scm
-                script {
-                    echo "BRANCH_NAME = ${env.BRANCH_NAME}"
-                    echo "TAG_NAME    = ${env.TAG_NAME ?: 'N/A'}"
-                }
-            }
-        }
-
-        /* ================= ENV DECISION ================= */
-        stage('Determine Environment') {
+        stage('Detect Deployment Type') {
             steps {
                 script {
 
-                    /* ---------- STAGING (branch push) ---------- */
-                    if (env.BRANCH_NAME == "staging" && !env.TAG_NAME) {
+                    def gitRef = sh(
+                        script: "git symbolic-ref -q --short HEAD || git describe --tags --exact-match",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Git ref detected: ${gitRef}"
+
+                    if (gitRef == "staging") {
                         env.DEPLOY_ENV = "staging"
-                        env.BUILD_TYPE = "commit"
+                        env.IMAGE_TAG  = "staging-${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
 
-                    /* ---------- PRODUCTION (tag push) ---------- */
-                    } else if (env.TAG_NAME) {
-
-                        // Optional: enforce semantic version tags
-                        if (!env.TAG_NAME.matches(/^v\d+\.\d+\.\d+$/)) {
-                            error("❌ Invalid tag format: ${env.TAG_NAME}. Use vX.Y.Z")
-                        }
-
+                    } else if (gitRef.startsWith("v")) {
                         env.DEPLOY_ENV = "production"
-                        env.BUILD_TYPE = "release"
+                        env.IMAGE_TAG  = gitRef
 
-                    /* ---------- BLOCK MASTER WITHOUT TAG ---------- */
-                    } else if (env.BRANCH_NAME == "master") {
-                        error("""
-❌ Direct push to master detected.
-
-Production deployments are allowed ONLY via tags.
-
-Correct flow:
-  git checkout master
-  git merge staging
-  git push origin master
-  git tag vX.Y.Z
-  git push origin vX.Y.Z
-""")
                     } else {
-                        error("❌ Unsupported branch: ${env.BRANCH_NAME}")
+                        error("❌ Unsupported ref: ${gitRef}")
                     }
 
-                    echo """
-=============================
- Deployment Summary
-=============================
- Branch      : ${env.BRANCH_NAME}
- Tag         : ${env.TAG_NAME ?: "N/A"}
- Environment : ${env.DEPLOY_ENV}
- Build Type  : ${env.BUILD_TYPE}
-=============================
-"""
+                    echo "DEPLOY_ENV=${env.DEPLOY_ENV}"
+                    echo "IMAGE_TAG=${env.IMAGE_TAG}"
                 }
             }
         }
 
-        /* ================= IMAGE TAG ================= */
-        stage('Generate Docker Image Tag') {
-            steps {
-                script {
-                    if (env.BUILD_TYPE == "commit") {
-                        def commitId = sh(
-                            script: "git rev-parse --short HEAD",
-                            returnStdout: true
-                        ).trim()
-                        env.IMAGE_TAG = "staging-${commitId}"
-                    } else {
-                        env.IMAGE_TAG = env.TAG_NAME
-                    }
-
-                    echo "Docker Image → ${env.IMAGE_REPO}:${env.IMAGE_TAG}"
-                }
-            }
-        }
-
-        /* ================= DOCKER BUILD & PUSH ================= */
-        stage('Docker Build & Push') {
+        stage('Build & Push Docker Image') {
             steps {
                 withCredentials([
                     usernamePassword(
@@ -117,10 +55,25 @@ Correct flow:
                 ]) {
                     sh """
                         echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-                        docker build --no-cache -t ${env.IMAGE_REPO}:${env.IMAGE_TAG} .
+                        docker build -t ${env.IMAGE_REPO}:${env.IMAGE_TAG} .
                         docker push ${env.IMAGE_REPO}:${env.IMAGE_TAG}
                         docker logout
                     """
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                script {
+                    if (env.DEPLOY_ENV == "staging") {
+                        echo "🚀 Deploying to STAGING"
+                        // kubectl / helm / argocd sync staging
+
+                    } else if (env.DEPLOY_ENV == "production") {
+                        echo "🔥 Deploying to PRODUCTION"
+                        // kubectl / helm / argocd sync production
+                    }
                 }
             }
         }
@@ -128,7 +81,7 @@ Correct flow:
 
     post {
         success {
-            echo "✅ ${env.DEPLOY_ENV.toUpperCase()} deployment completed successfully"
+            echo "✅ ${env.DEPLOY_ENV.toUpperCase()} deployment successful"
         }
         failure {
             echo "❌ Deployment failed"
@@ -138,6 +91,3 @@ Correct flow:
         }
     }
 }
-
-//testing with farhan 
-////i configure webhook 
