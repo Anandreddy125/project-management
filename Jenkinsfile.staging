@@ -87,3 +87,6 @@ pipeline {
         }
     }
 }
+
+
+//now im using jenkinsfile script seperate file for staging and production.
