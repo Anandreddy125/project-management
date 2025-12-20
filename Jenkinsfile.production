@@ -22,14 +22,17 @@ pipeline {
             steps {
                 script {
                     if (!env.GIT_BRANCH) {
-                        error("❌ GIT_BRANCH not set. This job must be triggered by Git")
+                        error("❌ GIT_BRANCH not set. This job must be triggered by a Git tag")
                     }
 
                     if (!env.GIT_BRANCH.startsWith("refs/tags/")) {
                         error("❌ This pipeline runs ONLY for git tags")
                     }
 
-                    env.TAG_NAME = env.GIT_BRANCH.replace("refs/tags/", "")
+                    // Extract tag name
+                    env.TAG_NAME = env.GIT_BRANCH
+                        .replace("refs/tags/", "")
+                        .replaceAll("\\^\\{\\}", "")   // <-- FIX FOR ANNOTATED TAGS
 
                     if (!env.TAG_NAME.matches(/^v\\d+\\.\\d+\\.\\d+$/)) {
                         error("❌ Invalid tag format: ${env.TAG_NAME}. Expected vX.Y.Z")
@@ -78,10 +81,7 @@ pipeline {
         stage('Deploy to Production') {
             steps {
                 echo "🔥 Deploying ${TAG_NAME} to PRODUCTION"
-                // Example:
-                // helm upgrade reports ./helm --set image.tag=${TAG_NAME}
-                // OR
-                // argocd app sync reports-prod
+                // helm upgrade / kubectl apply / argocd app sync
             }
         }
     }
