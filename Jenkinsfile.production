@@ -1,0 +1,86 @@
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    triggers {
+        githubPush()
+    }
+
+    environment {
+        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID    = "terra-github"
+        DOCKER_CREDENTIALS_ID = "anand-dockerhub"
+        IMAGE_REPO            = "anrs125/reports-tesing"
+        DEPLOY_ENV            = "production"
+    }
+
+    stages {
+
+        stage('Checkout Tag') {
+            steps {
+                script {
+                    env.TAG_NAME = sh(
+                        script: "git describe --tags --exact-match",
+                        returnStdout: true
+                    ).trim()
+
+                    if (!env.TAG_NAME.matches(/^v\\d+\\.\\d+\\.\\d+$/)) {
+                        error("❌ Invalid tag format: ${env.TAG_NAME}")
+                    }
+
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "refs/tags/${env.TAG_NAME}"]],
+                        userRemoteConfigs: [[
+                            url: env.GIT_REPO,
+                            credentialsId: env.GIT_CREDENTIALS_ID
+                        ]]
+                    ])
+                }
+            }
+        }
+
+        stage('Build & Push Image') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: env.DOCKER_CREDENTIALS_ID,
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh """
+                        echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+                        docker build -t ${env.IMAGE_REPO}:${env.TAG_NAME} .
+                        docker push ${env.IMAGE_REPO}:${env.TAG_NAME}
+                        docker logout
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to Production') {
+            steps {
+                echo "🔥 Deploying ${env.TAG_NAME} to PRODUCTION"
+                // kubectl / helm / argocd sync production
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ PRODUCTION deployment successful for ${env.TAG_NAME}"
+        }
+        failure {
+            echo "❌ PRODUCTION deployment failed"
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
