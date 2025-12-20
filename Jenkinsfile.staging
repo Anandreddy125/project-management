@@ -13,7 +13,7 @@ pipeline {
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
 
         DEPLOY_ENV            = "staging"
-        IMAGE_NAME            = ""anrs125/reports-tesing""
+        IMAGE_NAME            = "anrs125/reports-tesing"
         KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
         DEPLOYMENT_FILE       = "staging-report.yaml"
         DEPLOYMENT_NAME       = "staging-reports-api"
