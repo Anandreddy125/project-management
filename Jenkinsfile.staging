@@ -8,16 +8,18 @@ pipeline {
     }
 
     environment {
+        SCANNER_HOME          = tool('sonar-scanner')
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
+        SONARQUBE_ENV         = "sonar-server"
 
-        DEPLOY_ENV            = "staging"
-        IMAGE_NAME            = "anrs125/reports-tesing"
-        KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
-        DEPLOYMENT_FILE       = ""
-        DEPLOYMENT_NAME       = "staging-reports-api"
-        NAMESPACE             = "reports-staging"
+        DEPLOY_ENV                 = "staging"
+        IMAGE_NAME                = "anrs125/reports-tesing"
+        KUBERNETES_CREDENTIALS_ID = "reports-staging"
+        DEPLOYMENT_FILE           = "staging-report.yaml"
+        DEPLOYMENT_NAME           = "staging-reports-api"
+        NAMESPACE                 = "reports"
     }
 
     triggers {
@@ -32,7 +34,8 @@ pipeline {
 
         stage('Checkout Staging') {
             steps {
-                checkout([$class: 'GitSCM',
+                checkout([
+                    $class: 'GitSCM',
                     branches: [[name: 'staging']],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
@@ -47,7 +50,7 @@ pipeline {
                 script {
                     def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                     env.IMAGE_TAG = "staging-${commitId}"
-                    echo "Staging tag: ${env.IMAGE_TAG}"
+                    echo "Staging image tag: ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -59,12 +62,12 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
-                    sh """
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
+                    sh '''
+                        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USER" --password-stdin
                         docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
                         docker logout
-                    """
+                    '''
                 }
             }
         }
@@ -73,11 +76,11 @@ pipeline {
             steps {
                 dir('kubernetes') {
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
-                        sh """
+                        sh '''
                             sed -i 's|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' ${DEPLOYMENT_FILE}
                             kubectl apply -f ${DEPLOYMENT_FILE} -n ${NAMESPACE}
                             kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE}
-                        """
+                        '''
                     }
                 }
             }
@@ -86,7 +89,10 @@ pipeline {
 
     post {
         success {
-            echo "✅ Staging deployment successful"
+            echo "✅ Staging deployment successful: ${IMAGE_NAME}:${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Staging deployment failed"
         }
         always {
             cleanWs()
