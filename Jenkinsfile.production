@@ -4,28 +4,43 @@ pipeline {
     options {
         disableConcurrentBuilds()
         timestamps()
+        timeout(time: 60, unit: 'MINUTES')
     }
 
     environment {
-        GIT_REPO           = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID = "terra-github"
-    }
-
-    parameters {
-        string(
-            name: 'RELEASE_TAG',
-            defaultValue: 'v1.2.7',
-            description: 'Release tag to create (example: v1.2.7)'
-        )
+        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID    = "terra-github"
+        DOCKER_CREDENTIALS_ID = "anand-dockerhub"
+        IMAGE_REPO            = "anrs125/reports-tesing"
+        DEPLOY_ENV            = "production"
     }
 
     stages {
 
-        stage('Checkout Master') {
+        /* ================= DETECT TAG ================= */
+        stage('Detect Tag') {
+            steps {
+                script {
+                    if (!env.GIT_BRANCH || !env.GIT_BRANCH.startsWith("refs/tags/")) {
+                        error("❌ This pipeline runs ONLY for git tags")
+                    }
+
+                    env.TAG_NAME = env.GIT_BRANCH
+                        .replace("refs/tags/", "")
+                        .replaceAll("\\^\\{\\}", "")
+                        .trim()
+
+                    echo "✅ Production tag detected: ${env.TAG_NAME}"
+                }
+            }
+        }
+
+        /* ================= CHECKOUT TAG ================= */
+        stage('Checkout Tag') {
             steps {
                 checkout([
                     $class: 'GitSCM',
-                    branches: [[name: 'master']],
+                    branches: [[name: "refs/tags/${env.TAG_NAME}"]],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
@@ -34,37 +49,48 @@ pipeline {
             }
         }
 
-        stage('Merge Staging into Master') {
+        /* ================= BUILD & PUSH IMAGE ================= */
+        stage('Build & Push Docker Image') {
             steps {
-                sh """
-                    set -e
-                    git config user.name "jenkins"
-                    git config user.email "jenkins@ci.local"
-
-                    git switch master
-                    git fetch origin
-                    git merge origin/staging --no-ff -m "Merge staging into master"
-                """
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: env.DOCKER_CREDENTIALS_ID,
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+                    sh """
+                        set -e
+                        echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
+                        docker build -t ${IMAGE_REPO}:${TAG_NAME} .
+                        docker push ${IMAGE_REPO}:${TAG_NAME}
+                        docker logout
+                    """
+                }
             }
         }
 
-        stage('Create & Push Tag') {
+        /* ================= DEPLOY ================= */
+        stage('Deploy to Production') {
             steps {
-                sh """
-                    set -e
-                    git tag ${params.RELEASE_TAG}
-                    git push origin ${params.RELEASE_TAG}
-                """
+                echo "🔥 Deploying ${TAG_NAME} to PRODUCTION"
+                // Examples (choose one):
+                // kubectl set image deployment/reports reports=${IMAGE_REPO}:${TAG_NAME} -n production
+                // helm upgrade reports ./helm --set image.tag=${TAG_NAME}
+                // argocd app sync reports-prod
             }
         }
     }
 
     post {
         success {
-            echo "✅ staging merged into master and tag ${params.RELEASE_TAG} pushed"
+            echo "✅ PRODUCTION deployment successful for tag ${TAG_NAME}"
         }
         failure {
-            echo "❌ Merge or tag failed"
+            echo "❌ PRODUCTION deployment failed for tag ${TAG_NAME}"
+        }
+        always {
+            cleanWs()
         }
     }
 }
