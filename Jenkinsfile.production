@@ -11,36 +11,38 @@ pipeline {
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
-        IMAGE_REPO            = "anrs125/reports-tesing"
+
         DEPLOY_ENV            = "production"
+        IMAGE_NAME                = "anrs125/reports-tesing"
+        KUBERNETES_CREDENTIALS_ID = "testing-anand"
+        DEPLOYMENT_FILE       = "prod-reports.yaml"
+        DEPLOYMENT_NAME       = "prod-reports-api"
+        NAMESPACE             = "reports"
     }
 
     stages {
 
-        /* ================= DETECT TAG ================= */
         stage('Detect Tag') {
             steps {
                 script {
-                    if (!env.GIT_BRANCH || !env.GIT_BRANCH.startsWith("refs/tags/")) {
-                        error("❌ This pipeline runs ONLY for git tags")
+                    if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
+                        error("This pipeline runs only for git tags")
                     }
 
-                    env.TAG_NAME = env.GIT_BRANCH
+                    env.IMAGE_TAG = env.GIT_BRANCH
                         .replace("refs/tags/", "")
                         .replaceAll("\\^\\{\\}", "")
                         .trim()
 
-                    echo "✅ Production tag detected: ${env.TAG_NAME}"
+                    echo "Production release tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        /* ================= CHECKOUT TAG ================= */
         stage('Checkout Tag') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: "refs/tags/${env.TAG_NAME}"]],
+                checkout([$class: 'GitSCM',
+                    branches: [[name: "refs/tags/${env.IMAGE_TAG}"]],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
@@ -49,45 +51,41 @@ pipeline {
             }
         }
 
-        /* ================= BUILD & PUSH IMAGE ================= */
-        stage('Build & Push Docker Image') {
+        stage('Docker Build & Push') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: env.DOCKER_CREDENTIALS_ID,
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
+                withCredentials([usernamePassword(
+                    credentialsId: env.DOCKER_CREDENTIALS_ID,
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
                     sh """
-                        set -e
-                        echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
-                        docker build -t ${IMAGE_REPO}:${TAG_NAME} .
-                        docker push ${IMAGE_REPO}:${TAG_NAME}
+                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
+                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
                         docker logout
                     """
                 }
             }
         }
 
-        /* ================= DEPLOY ================= */
         stage('Deploy to Production') {
             steps {
-                echo "🔥 Deploying ${TAG_NAME} to PRODUCTION"
-                // Examples (choose one):
-                // kubectl set image deployment/reports reports=${IMAGE_REPO}:${TAG_NAME} -n production
-                // helm upgrade reports ./helm --set image.tag=${TAG_NAME}
-                // argocd app sync reports-prod
+                dir('deployments') {
+                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
+                        sh """
+                            sed -i 's|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' ${DEPLOYMENT_FILE}
+                            kubectl apply -f ${DEPLOYMENT_FILE} -n ${NAMESPACE}
+                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE}
+                        """
+                    }
+                }
             }
         }
     }
 
     post {
         success {
-            echo "✅ PRODUCTION deployment successful for tag ${TAG_NAME}"
-        }
-        failure {
-            echo "❌ PRODUCTION deployment failed for tag ${TAG_NAME}"
+            echo "✅ Production deployment successful for ${IMAGE_TAG}"
         }
         always {
             cleanWs()
