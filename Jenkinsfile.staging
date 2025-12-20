@@ -19,7 +19,7 @@ pipeline {
         KUBERNETES_CREDENTIALS_ID = "reports-staging"
         DEPLOYMENT_FILE           = "staging-report.yaml"
         DEPLOYMENT_NAME           = "staging-reports-api"
-        NAMESPACE                 = "reports"
+        NAMESPACE                 = "reports-staging"
     }
 
     triggers {
