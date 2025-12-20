@@ -7,10 +7,6 @@ pipeline {
         timeout(time: 60, unit: 'MINUTES')
     }
 
-    triggers {
-        githubPush()
-    }
-
     environment {
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
@@ -21,27 +17,34 @@ pipeline {
 
     stages {
 
-        stage('Checkout Tag') {
+        stage('Validate Tag') {
             steps {
                 script {
-                    env.TAG_NAME = sh(
-                        script: "git describe --tags --exact-match",
-                        returnStdout: true
-                    ).trim()
+                    if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
+                        error("❌ This job runs ONLY for git tags")
+                    }
+
+                    env.TAG_NAME = env.GIT_BRANCH.replace("refs/tags/", "")
 
                     if (!env.TAG_NAME.matches(/^v\\d+\\.\\d+\\.\\d+$/)) {
                         error("❌ Invalid tag format: ${env.TAG_NAME}")
                     }
 
-                    checkout([
-                        $class: 'GitSCM',
-                        branches: [[name: "refs/tags/${env.TAG_NAME}"]],
-                        userRemoteConfigs: [[
-                            url: env.GIT_REPO,
-                            credentialsId: env.GIT_CREDENTIALS_ID
-                        ]]
-                    ])
+                    echo "✅ Building PRODUCTION release: ${env.TAG_NAME}"
                 }
+            }
+        }
+
+        stage('Checkout Tag') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "refs/tags/${env.TAG_NAME}"]],
+                    userRemoteConfigs: [[
+                        url: env.GIT_REPO,
+                        credentialsId: env.GIT_CREDENTIALS_ID
+                    ]]
+                ])
             }
         }
 
@@ -67,7 +70,7 @@ pipeline {
         stage('Deploy to Production') {
             steps {
                 echo "🔥 Deploying ${env.TAG_NAME} to PRODUCTION"
-                // kubectl / helm / argocd sync production
+                // kubectl apply / helm upgrade / argocd sync
             }
         }
     }
