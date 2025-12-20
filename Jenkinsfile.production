@@ -70,7 +70,7 @@ pipeline {
 
         stage('Deploy to Production') {
             steps {
-                dir('deployments') {
+                dir('kubernetes') {
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                         sh """
                             sed -i 's|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' ${DEPLOYMENT_FILE}
