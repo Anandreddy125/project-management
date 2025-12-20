@@ -15,7 +15,7 @@ pipeline {
         DEPLOY_ENV            = "staging"
         IMAGE_NAME            = "anrs125/reports-tesing"
         KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
-        DEPLOYMENT_FILE       = "staging-report.yaml"
+        DEPLOYMENT_FILE       = ""
         DEPLOYMENT_NAME       = "staging-reports-api"
         NAMESPACE             = "reports-staging"
     }
