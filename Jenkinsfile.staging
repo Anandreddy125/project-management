@@ -7,25 +7,33 @@ pipeline {
         timeout(time: 60, unit: 'MINUTES')
     }
 
-    triggers {
-        githubPush()
-    }
-
     environment {
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
-        IMAGE_REPO            = "anrs125/reports-tesing"
+
         DEPLOY_ENV            = "staging"
+        IMAGE_NAME            = ""anrs125/reports-tesing""
+        KUBERNETES_CREDENTIALS_ID = "k3s-report-staging"
+        DEPLOYMENT_FILE       = "staging-report.yaml"
+        DEPLOYMENT_NAME       = "staging-reports-api"
+        NAMESPACE             = "reports-staging"
+    }
+
+    triggers {
+        githubPush()
     }
 
     stages {
 
-        stage('Checkout Staging Branch') {
+        stage('Clean Workspace') {
+            steps { cleanWs() }
+        }
+
+        stage('Checkout Staging') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: 'refs/heads/staging']],
+                checkout([$class: 'GitSCM',
+                    branches: [[name: 'staging']],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
@@ -34,33 +42,27 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Generate Image Tag') {
             steps {
                 script {
-                    def commitId = sh(
-                        script: "git rev-parse --short HEAD",
-                        returnStdout: true
-                    ).trim()
-
+                    def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
                     env.IMAGE_TAG = "staging-${commitId}"
-                    echo "Docker Image: ${env.IMAGE_REPO}:${env.IMAGE_TAG}"
+                    echo "Staging tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        stage('Build & Push Image') {
+        stage('Docker Build & Push') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: env.DOCKER_CREDENTIALS_ID,
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
+                withCredentials([usernamePassword(
+                    credentialsId: env.DOCKER_CREDENTIALS_ID,
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
                     sh """
-                        echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-                        docker build -t ${env.IMAGE_REPO}:${env.IMAGE_TAG} .
-                        docker push ${env.IMAGE_REPO}:${env.IMAGE_TAG}
+                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
+                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
                         docker logout
                     """
                 }
@@ -69,24 +71,25 @@ pipeline {
 
         stage('Deploy to Staging') {
             steps {
-                echo "🚀 Deploying to STAGING"
-                // kubectl / helm / argocd sync staging
+                dir('deployments') {
+                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
+                        sh """
+                            sed -i 's|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' ${DEPLOYMENT_FILE}
+                            kubectl apply -f ${DEPLOYMENT_FILE} -n ${NAMESPACE}
+                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE}
+                        """
+                    }
+                }
             }
         }
     }
 
     post {
         success {
-            echo "✅ STAGING deployment successful"
-        }
-        failure {
-            echo "❌ STAGING deployment failed"
+            echo "✅ Staging deployment successful"
         }
         always {
             cleanWs()
         }
     }
 }
-
-
-//now im using jenkinsfile script seperate file for staging and production.
