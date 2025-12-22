@@ -1,0 +1,100 @@
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
+    environment {
+        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID    = "github-anand"
+        DOCKER_CREDENTIALS_ID = "docker-test"
+
+        DEPLOY_ENV = "production"
+        IMAGE_NAME = "anrs125/testing-repo"
+    }
+
+    stages {
+
+        stage('Validate Tag Trigger') {
+            steps {
+                script {
+                    if (!env.GIT_BRANCH || !env.GIT_BRANCH.startsWith("refs/tags/")) {
+                        error("❌ This production pipeline runs ONLY for Git tags")
+                    }
+
+                    env.IMAGE_TAG = env.GIT_BRANCH
+                        .replace("refs/tags/", "")
+                        .replaceAll("\\^\\{\\}", "")
+                        .trim()
+
+                    if (!env.IMAGE_TAG) {
+                        error("❌ Unable to determine Git tag")
+                    }
+
+                    echo "🚀 Production release detected"
+                    echo "Tag       : ${env.IMAGE_TAG}"
+                    echo "Environment: ${DEPLOY_ENV}"
+                }
+            }
+        }
+
+        stage('Checkout Release Code') {
+            steps {
+                echo "📦 Checking out source code for tag: ${IMAGE_TAG}"
+
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "refs/tags/${IMAGE_TAG}"]],
+                    userRemoteConfigs: [[
+                        url: env.GIT_REPO,
+                        credentialsId: env.GIT_CREDENTIALS_ID
+                    ]]
+                ])
+            }
+        }
+
+        stage('Docker Build & Push') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: env.DOCKER_CREDENTIALS_ID,
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+                        echo "🔐 Logging into Docker Hub"
+                        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USER" --password-stdin
+
+                        echo "🐳 Building Docker image"
+                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+
+                        echo "📤 Pushing Docker image"
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
+
+                        docker logout
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Production build successful"
+            echo "Docker Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+        }
+
+        failure {
+            echo "❌ Production pipeline failed"
+        }
+
+        always {
+            cleanWs()
+        }
+    }
+}
