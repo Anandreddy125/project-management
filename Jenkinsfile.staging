@@ -13,7 +13,7 @@ pipeline {
         GIT_CREDENTIALS_ID    = "github-anand"
 
         DOCKER_CREDENTIALS_ID = "docker-test"
-        IMAGE_NAME            = "anrs125/reports-tesing"
+        IMAGE_NAME            = "anrs125/testing-repo"
         DEPLOY_ENV            = "staging"
     }
 
