@@ -92,3 +92,5 @@ pipeline {
         }
     }
 }
+
+// on jenkins pipeline enabled light checkout
