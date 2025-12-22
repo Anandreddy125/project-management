@@ -8,18 +8,18 @@ pipeline {
     }
 
     environment {
-        SCANNER_HOME          = tool('sonar-scanner')
-        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID    = "terra-github"
-        DOCKER_CREDENTIALS_ID = "anand-dockerhub"
-        SONARQUBE_ENV         = "sonar-server"
+        SCANNER_HOME               = tool('sonar-scanner')
+        GIT_REPO                   = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID         = "terra-github"
+        DOCKER_CREDENTIALS_ID      = "anand-dockerhub"
+        SONARQUBE_ENV              = "sonar-server"
 
         DEPLOY_ENV                 = "staging"
-        IMAGE_NAME                = "anrs125/reports-tesing"
-        KUBERNETES_CREDENTIALS_ID = "testing-anand"
-        DEPLOYMENT_FILE           = "staging-report.yaml"
-        DEPLOYMENT_NAME           = "staging-reports-api"
-        NAMESPACE                 = "reports-staging"
+        IMAGE_NAME                 = "anrs125/reports-tesing"
+        KUBERNETES_CREDENTIALS_ID  = "testing-anand"
+        DEPLOYMENT_FILE            = "staging-report.yaml"
+        DEPLOYMENT_NAME            = "staging-reports-api"
+        NAMESPACE                  = "reports-staging"
     }
 
     triggers {
@@ -28,15 +28,29 @@ pipeline {
 
     stages {
 
+        /* ================= BRANCH GUARD ================= */
+        stage('Branch Guard - Staging Only') {
+            steps {
+                script {
+                    if (env.BRANCH_NAME != 'staging') {
+                        error("⛔ Staging pipeline runs ONLY for 'staging' branch")
+                    }
+                    echo "✅ Branch validated: ${env.BRANCH_NAME}"
+                }
+            }
+        }
+
+        /* ================= CLEAN ================= */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
 
+        /* ================= CHECKOUT ================= */
         stage('Checkout Staging') {
             steps {
                 checkout([
                     $class: 'GitSCM',
-                    branches: [[name: 'staging']],
+                    branches: [[name: '*/staging']],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
@@ -45,16 +59,22 @@ pipeline {
             }
         }
 
+        /* ================= IMAGE TAG ================= */
         stage('Generate Image Tag') {
             steps {
                 script {
-                    def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    def commitId = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+
                     env.IMAGE_TAG = "staging-${commitId}"
-                    echo "Staging image tag: ${env.IMAGE_TAG}"
+                    echo "🧱 Image Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
+        /* ================= DOCKER ================= */
         stage('Docker Build & Push') {
             steps {
                 withCredentials([usernamePassword(
@@ -72,6 +92,7 @@ pipeline {
             }
         }
 
+        /* ================= DEPLOY ================= */
         stage('Deploy to Staging') {
             steps {
                 dir('kubernetes') {
@@ -99,7 +120,3 @@ pipeline {
         }
     }
 }
-
-
-
-//testing jenkinsfile on both deployments
