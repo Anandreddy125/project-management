@@ -1,0 +1,87 @@
+pipeline {
+    agent any
+
+    environment {
+        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID    = "github-anand"
+        DOCKER_CREDENTIALS_ID = "docker-test"
+        IMAGE_NAME                = "anrs125/reports-tesing"
+    }
+
+    parameters {
+        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Enable rollback deployment')
+        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target version tag for rollback')
+        booleanParam(name: 'FORCE_BUILD', defaultValue: false, description: 'Force rebuild even if no code change')
+    }
+
+    triggers {
+        githubPush()
+    }
+
+    stages {
+
+        stage('Clean Workspace') {
+            steps { cleanWs() }
+        }
+
+        stage('Checkout Staging') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${env.GIT_BRANCH}"]],
+                    userRemoteConfigs: [[
+                        url: env.GIT_REPO,
+                        credentialsId: env.GIT_CREDENTIALS_ID
+                    ]]
+                ])
+            }
+        }
+
+        stage('Generate Image Tag') {
+            steps {
+                script {
+                    def commitId = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+                    env.IMAGE_TAG = "staging-${commitId}"
+                    echo "Image tag: ${env.IMAGE_TAG}"
+                }
+            }
+        }
+
+        stage('Docker Build & Push') {
+            when {
+                anyOf {
+                    changeset "**"
+                    expression { params.FORCE_BUILD }
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: env.DOCKER_CREDENTIALS_ID,
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
+                    sh '''
+                        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Staging deployment successful: ${IMAGE_NAME}:${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Staging deployment failed"
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
