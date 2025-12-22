@@ -1,17 +1,38 @@
 pipeline {
     agent any
 
+    options {
+        skipDefaultCheckout()        // IMPORTANT: avoid double checkout
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
     environment {
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "github-anand"
+
         DOCKER_CREDENTIALS_ID = "docker-test"
-        IMAGE_NAME                = "anrs125/reports-tesing"
+        IMAGE_NAME            = "anrs125/reports-tesing"
+        DEPLOY_ENV            = "staging"
     }
 
     parameters {
-        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Enable rollback deployment')
-        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target version tag for rollback')
-        booleanParam(name: 'FORCE_BUILD', defaultValue: false, description: 'Force rebuild even if no code change')
+        booleanParam(
+            name: 'ROLLBACK',
+            defaultValue: false,
+            description: 'Enable rollback deployment'
+        )
+        string(
+            name: 'TARGET_VERSION',
+            defaultValue: '',
+            description: 'Docker image tag for rollback'
+        )
+        booleanParam(
+            name: 'FORCE_BUILD',
+            defaultValue: false,
+            description: 'Force Docker build even if no code change'
+        )
     }
 
     triggers {
@@ -20,36 +41,53 @@ pipeline {
 
     stages {
 
+        /* ---------------- CLEAN ---------------- */
         stage('Clean Workspace') {
-            steps { cleanWs() }
+            steps {
+                cleanWs()
+            }
         }
 
+        /* ---------------- CHECKOUT ---------------- */
         stage('Checkout Staging') {
             steps {
                 checkout([
                     $class: 'GitSCM',
-                    branches: [[name: "*/${env.GIT_BRANCH}"]],
+                    branches: [[name: '*/staging']],   // ✅ FIXED
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
                     ]]
                 ])
+
+                sh 'git branch'
+                sh 'git log -1 --oneline'
             }
         }
 
+        /* ---------------- IMAGE TAG ---------------- */
         stage('Generate Image Tag') {
             steps {
                 script {
-                    def commitId = sh(
-                        script: "git rev-parse --short HEAD",
-                        returnStdout: true
-                    ).trim()
-                    env.IMAGE_TAG = "staging-${commitId}"
-                    echo "Image tag: ${env.IMAGE_TAG}"
+                    if (params.ROLLBACK) {
+                        if (!params.TARGET_VERSION?.trim()) {
+                            error("ROLLBACK enabled but TARGET_VERSION is empty")
+                        }
+                        env.IMAGE_TAG = params.TARGET_VERSION
+                    } else {
+                        def commitId = sh(
+                            script: "git rev-parse --short HEAD",
+                            returnStdout: true
+                        ).trim()
+                        env.IMAGE_TAG = "staging-${commitId}"
+                    }
+
+                    echo "Docker Image Tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
+        /* ---------------- BUILD & PUSH ---------------- */
         stage('Docker Build & Push') {
             when {
                 anyOf {
@@ -75,10 +113,11 @@ pipeline {
 
     post {
         success {
-            echo "✅ Staging deployment successful: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "✅ STAGING build successful"
+            echo "Image pushed: ${IMAGE_NAME}:${IMAGE_TAG}"
         }
         failure {
-            echo "❌ Staging deployment failed"
+            echo "❌ STAGING pipeline failed"
         }
         always {
             cleanWs()
