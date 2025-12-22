@@ -12,54 +12,45 @@ pipeline {
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
 
-        DEPLOY_ENV                 = "production"
-        IMAGE_NAME                 = "anrs125/reports-tesing"
-        KUBERNETES_CREDENTIALS_ID  = "testing-anand"
-        DEPLOYMENT_FILE            = "prod-reports.yaml"
-        DEPLOYMENT_NAME            = "prod-reports-api"
-        NAMESPACE                  = "reports-production"
-    }
-
-    triggers {
-        githubPush()
+        DEPLOY_ENV            = "production"
+        IMAGE_NAME                = "anrs125/reports-tesing"
+        KUBERNETES_CREDENTIALS_ID = "testing-anand"
+        DEPLOYMENT_FILE       = "prod-reports.yaml"
+        DEPLOYMENT_NAME       = "prod-reports-api"
+        NAMESPACE             = "reports-production"
     }
 
     stages {
 
-        /* ---------------- CHECK BRANCH ---------------- */
-        stage('Validate Branch') {
+        stage('Detect Tag') {
             steps {
                 script {
-                    if (env.BRANCH_NAME != "master") {
-                        error("❌ Production deployment allowed only from master branch")
+                    if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
+                        error("This pipeline runs only for git tags")
                     }
-                    echo "✅ Master branch detected"
+
+                    env.IMAGE_TAG = env.GIT_BRANCH
+                        .replace("refs/tags/", "")
+                        .replaceAll("\\^\\{\\}", "")
+                        .trim()
+
+                    echo "Production release tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        /* ---------------- CHECKOUT ---------------- */
-        stage('Checkout Master') {
+        stage('Checkout Tag') {
             steps {
                 checkout([$class: 'GitSCM',
-                    branches: [[name: '*/master']],
+                    branches: [[name: "refs/tags/${env.IMAGE_TAG}"]],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
                     ]]
                 ])
-
-                script {
-                    env.IMAGE_TAG = sh(
-                        script: "git rev-parse --short HEAD",
-                        returnStdout: true
-                    ).trim()
-                    echo "Docker Image Tag: ${env.IMAGE_TAG}"
-                }
             }
         }
 
-        /* ---------------- BUILD & PUSH ---------------- */
         stage('Docker Build & Push') {
             steps {
                 withCredentials([usernamePassword(
@@ -68,7 +59,7 @@ pipeline {
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
                     sh """
-                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USER --password-stdin
+                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
                         docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
                         docker logout
@@ -77,7 +68,6 @@ pipeline {
             }
         }
 
-        /* ---------------- DEPLOY ---------------- */
         stage('Deploy to Production') {
             steps {
                 dir('kubernetes') {
@@ -95,10 +85,9 @@ pipeline {
 
     post {
         success {
-            echo "✅ Production deployment successful from MASTER | Tag: ${IMAGE_TAG}"
+            echo "✅ Production deployment successful for ${IMAGE_TAG}"
         }
         always {
             cleanWs()
         }
     }
-}
