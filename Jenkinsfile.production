@@ -94,3 +94,4 @@ pipeline {
 }
 
 // on jenkins pipeline enabled light checkout
+// amd enabled the branch
