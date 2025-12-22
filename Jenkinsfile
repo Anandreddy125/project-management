@@ -15,6 +15,7 @@ pipeline {
 
     stages {
 
+        /* ================= CHECKOUT ================= */
         stage('Checkout') {
             steps {
                 checkout scm
@@ -35,7 +36,13 @@ pipeline {
             }
             steps {
                 script {
-                    env.IMAGE_TAG = "staging-${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
+                    def commitId = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+
+                    env.IMAGE_TAG = "staging-${commitId}"
+                    echo "Staging image tag: ${env.IMAGE_TAG}"
                 }
 
                 withCredentials([usernamePassword(
@@ -44,13 +51,13 @@ pipeline {
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
                     sh """
-                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USER --password-stdin
+                        echo "\$DOCKER_PASSWORD" | docker login -u "\$DOCKER_USER" --password-stdin
                         docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
                     """
                 }
 
-                echo "✅ Deployed to STAGING"
+                echo "✅ STAGING deployment completed"
             }
         }
 
@@ -62,9 +69,10 @@ pipeline {
             steps {
                 script {
                     env.IMAGE_TAG = env.TAG_NAME
+                    echo "Production tag detected: ${env.IMAGE_TAG}"
                 }
 
-                /* Ensure tag is from master */
+                /* ---- Enforce tag must be from master ---- */
                 sh '''
                     git branch -r --contains ${IMAGE_TAG} | grep origin/master
                 '''
@@ -75,13 +83,13 @@ pipeline {
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
                     sh """
-                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USER --password-stdin
+                        echo "\$DOCKER_PASSWORD" | docker login -u "\$DOCKER_USER" --password-stdin
                         docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
                     """
                 }
 
-                echo "✅ Deployed to PRODUCTION"
+                echo "✅ PRODUCTION deployment completed"
             }
         }
     }
