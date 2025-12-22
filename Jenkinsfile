@@ -8,11 +8,15 @@ pipeline {
     }
 
     environment {
-        GIT_REPO                   = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID         = "github-anand"
-        DOCKER_CREDENTIALS_ID      = "docker-test"
-        IMAGE_NAME                 = "anrs125/testing-repo"
+        GIT_REPO                  = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID        = "terra-github"
+        DOCKER_CREDENTIALS_ID     = "anand-dockerhub"
 
+        IMAGE_NAME                = "anrs125/reports-testing"
+        KUBERNETES_CREDENTIALS_ID = "testing-anand"
+        DEPLOYMENT_FILE           = "prod-reports.yaml"
+        DEPLOYMENT_NAME           = "prod-reports-api"
+        NAMESPACE                 = "reports-production"
     }
 
     stages {
@@ -21,16 +25,42 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 checkout scm
+            }
+        }
 
+        /* ---------------- VALIDATE TAG ---------------- */
+        stage('Validate Tag From Master') {
+            steps {
                 script {
+
+                    /* ----- Skip non-tag builds ----- */
                     if (!env.TAG_NAME) {
                         echo "⏭️ Not a tag build. Skipping production deployment."
                         currentBuild.result = 'SUCCESS'
-                        error("Pipeline stopped: branch push detected.")
+                        error("Branch build detected")
                     }
 
+                    echo "🔖 Tag detected: ${env.TAG_NAME}"
+
+                    /* ----- Fetch all refs ----- */
+                    sh 'git fetch --all --tags'
+
+                    /* ----- Check tag belongs to master ----- */
+                    def branches = sh(
+                        script: "git branch -r --contains ${env.TAG_NAME}",
+                        returnStdout: true
+                    ).trim()
+
+                    if (!branches.contains('origin/master')) {
+                        echo "❌ Tag ${env.TAG_NAME} was NOT created from master branch"
+                        echo "Found in branches:"
+                        echo branches
+                        currentBuild.result = 'SUCCESS'
+                        error("Invalid tag source")
+                    }
+
+                    echo "✅ Tag ${env.TAG_NAME} verified from master"
                     env.IMAGE_TAG = env.TAG_NAME
-                    echo "🚀 Production release detected: ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -81,3 +111,6 @@ pipeline {
         }
     }
 }
+
+
+//added jenkinsfile on github
