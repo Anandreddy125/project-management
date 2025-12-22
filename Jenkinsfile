@@ -8,16 +8,16 @@ pipeline {
     }
 
     environment {
-        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID    = "terra-github"
-        DOCKER_CREDENTIALS_ID = "anand-dockerhub"
+        GIT_REPO                   = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID         = "terra-github"
+        DOCKER_CREDENTIALS_ID      = "anand-dockerhub"
 
-        DEPLOY_ENV            = "production"
-        IMAGE_NAME                = "anrs125/reports-tesing"
-        KUBERNETES_CREDENTIALS_ID = "testing-anand"
-        DEPLOYMENT_FILE       = "prod-reports.yaml"
-        DEPLOYMENT_NAME       = "prod-reports-api"
-        NAMESPACE             = "reports-production"
+        DEPLOY_ENV                 = "production"
+        IMAGE_NAME                 = "anrs125/reports-tesing"
+        KUBERNETES_CREDENTIALS_ID  = "testing-anand"
+        DEPLOYMENT_FILE            = "prod-reports.yaml"
+        DEPLOYMENT_NAME            = "prod-reports-api"
+        NAMESPACE                  = "reports-production"
     }
 
     stages {
@@ -26,7 +26,7 @@ pipeline {
             steps {
                 script {
                     if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
-                        error("This pipeline runs only for git tags")
+                        error("❌ This pipeline runs ONLY for git tags")
                     }
 
                     env.IMAGE_TAG = env.GIT_BRANCH
@@ -34,14 +34,15 @@ pipeline {
                         .replaceAll("\\^\\{\\}", "")
                         .trim()
 
-                    echo "Production release tag: ${env.IMAGE_TAG}"
+                    echo "✅ Production release tag detected: ${env.IMAGE_TAG}"
                 }
             }
         }
 
         stage('Checkout Tag') {
             steps {
-                checkout([$class: 'GitSCM',
+                checkout([
+                    $class: 'GitSCM',
                     branches: [[name: "refs/tags/${env.IMAGE_TAG}"]],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
@@ -59,7 +60,7 @@ pipeline {
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
                     sh """
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
+                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USER --password-stdin
                         docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
                         docker logout
@@ -85,9 +86,13 @@ pipeline {
 
     post {
         success {
-            echo "✅ Production deployment successful for ${IMAGE_TAG}"
+            echo "✅ Production deployment successful for tag ${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Production deployment failed"
         }
         always {
             cleanWs()
         }
     }
+}
