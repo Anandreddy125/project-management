@@ -13,16 +13,16 @@ pipeline {
         DOCKER_CREDENTIALS_ID = "docker-test"
 
         DEPLOY_ENV = "production"
-        IMAGE_NAME  = "anrs125/testing-repo"
+        IMAGE_NAME = "anrs125/testing-repo"
     }
 
     stages {
 
-        stage('Detect Release Tag') {
+        stage('Detect Tag') {
             steps {
                 script {
                     if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
-                        error("❌ This production pipeline runs ONLY for Git tags")
+                        error("❌ This pipeline runs only for Git tags")
                     }
 
                     env.IMAGE_TAG = env.GIT_BRANCH
@@ -30,12 +30,12 @@ pipeline {
                         .replaceAll("\\^\\{\\}", "")
                         .trim()
 
-                    echo "🚀 Release tag detected: ${env.IMAGE_TAG}"
+                    echo "🚀 Production release tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        stage('Checkout Release Tag') {
+        stage('Checkout Tag') {
             steps {
                 checkout([
                     $class: 'GitSCM',
@@ -68,14 +68,11 @@ pipeline {
 
     post {
         success {
-            echo "✅ Production Docker image pushed successfully"
-            echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "✅ Production deployment successful for tag ${IMAGE_TAG}"
         }
-
         failure {
-            echo "❌ Production pipeline failed"
+            echo "❌ Production deployment failed"
         }
-
         always {
             cleanWs()
         }
