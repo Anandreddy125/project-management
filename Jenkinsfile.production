@@ -1,23 +1,22 @@
 pipeline {
     agent any
 
-    options {
-        disableConcurrentBuilds()
-        timestamps()
-        timeout(time: 60, unit: 'MINUTES')
+    environment {
+        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID    = "terra-github"
+        DOCKER_CREDENTIALS_ID = "anand-dockerhub"
+
+        IMAGE_NAME                = "anrs125/reports-testing"
+        KUBERNETES_CREDENTIALS_ID = "testing-anand"
+        DEPLOYMENT_FILE           = "prod-reports.yaml"
+        DEPLOYMENT_NAME           = "prod-reports-api"
+        NAMESPACE                 = "reports-production"
     }
 
-    environment {
-        GIT_REPO                   = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID         = "terra-github"
-        DOCKER_CREDENTIALS_ID      = "anand-dockerhub"
-
-        DEPLOY_ENV                 = "production"
-        IMAGE_NAME                 = "anrs125/reports-tesing"
-        KUBERNETES_CREDENTIALS_ID  = "testing-anand"
-        DEPLOYMENT_FILE            = "prod-reports.yaml"
-        DEPLOYMENT_NAME            = "prod-reports-api"
-        NAMESPACE                  = "reports-production"
+    parameters {
+        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Enable rollback deployment')
+        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target version tag for rollback')
+        booleanParam(name: 'FORCE_BUILD', defaultValue: false, description: 'Force rebuild even if no code change')
     }
 
     stages {
@@ -28,25 +27,22 @@ pipeline {
         stage('Branch & Tag Guard') {
             steps {
                 script {
-                    echo "🔎 GIT_BRANCH = ${env.GIT_BRANCH}"
+                    echo "BRANCH_NAME = ${env.BRANCH_NAME}"
+                    echo "TAG_NAME    = ${env.TAG_NAME ?: 'N/A'}"
 
-                    /* ----- TAG BUILD (PRODUCTION RELEASE) ----- */
-                    if (env.GIT_BRANCH?.startsWith('refs/tags/')) {
-                        env.IMAGE_TAG = env.GIT_BRANCH
-                            .replace("refs/tags/", "")
-                            .replaceAll("\\^\\{\\}", "")
-                            .trim()
-
+                    /* ---------- TAG (PRODUCTION RELEASE) ---------- */
+                    if (env.TAG_NAME) {
+                        env.IMAGE_TAG = env.TAG_NAME
                         echo "✅ Tag detected → Production release: ${env.IMAGE_TAG}"
                     }
 
-                    /* ----- MASTER BRANCH BUILD ----- */
-                    else if (env.GIT_BRANCH == 'origin/master') {
+                    /* ---------- MASTER BRANCH ---------- */
+                    else if (env.BRANCH_NAME == 'master') {
                         env.IMAGE_TAG = "master-${env.BUILD_NUMBER}"
                         echo "✅ Master branch detected → Image tag: ${env.IMAGE_TAG}"
                     }
 
-                    /* ----- BLOCK EVERYTHING ELSE ----- */
+                    /* ---------- BLOCK OTHERS ---------- */
                     else {
                         error("⛔ Production pipeline allowed ONLY for master branch or git tags")
                     }
@@ -54,17 +50,15 @@ pipeline {
             }
         }
 
-        /* ================= CLEAN ================= */
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
 
-        /* ================= CHECKOUT ================= */
         stage('Checkout Source') {
             steps {
                 checkout([
                     $class: 'GitSCM',
-                    branches: [[name: env.GIT_BRANCH]],
+                    branches: [[name: "*/${env.BRANCH_NAME}"]],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
@@ -73,7 +67,6 @@ pipeline {
             }
         }
 
-        /* ================= DOCKER BUILD & PUSH ================= */
         stage('Docker Build & Push') {
             steps {
                 withCredentials([usernamePassword(
@@ -92,14 +85,13 @@ pipeline {
             }
         }
 
-        /* ================= DEPLOY ================= */
         stage('Deploy to Production') {
             steps {
                 dir('kubernetes') {
                     withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
                         sh '''
                             set -e
-                            sed -i 's|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' ${DEPLOYMENT_FILE}
+                            sed -i "s|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|" ${DEPLOYMENT_FILE}
                             kubectl apply -f ${DEPLOYMENT_FILE} -n ${NAMESPACE}
                             kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE}
                         '''
@@ -121,12 +113,3 @@ pipeline {
         }
     }
 }
-
-// jenkinsfile.production change
-
-// on jenkins pipeline enabled light checkout
-// amd enabled the branch
-
-//refs/tags/*
-//issue on jenkinsfile.produyction
-//issue on the jenkinsfile path now fix the issue
