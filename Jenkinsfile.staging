@@ -8,11 +8,10 @@ pipeline {
     }
 
     environment {
-        SCANNER_HOME          = tool('sonar-scanner')
         GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
         GIT_CREDENTIALS_ID    = "terra-github"
         DOCKER_CREDENTIALS_ID = "anand-dockerhub"
-        SONARQUBE_ENV         = "sonar-server"
+
 
         DEPLOY_ENV                 = "staging"
         IMAGE_NAME                = "anrs125/reports-tesing"
@@ -28,20 +27,24 @@ pipeline {
 
     stages {
 
+        stage('Validate Branch') {
+            steps {
+                script {
+                    if (env.BRANCH_NAME != "staging") {
+                        error("❌ This pipeline runs ONLY for staging branch. Current: ${env.BRANCH_NAME}")
+                    }
+                    echo "✅ Running staging pipeline on branch: ${env.BRANCH_NAME}"
+                }
+            }
+        }
+
         stage('Clean Workspace') {
             steps { cleanWs() }
         }
 
         stage('Checkout Staging') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: 'staging']],
-                    userRemoteConfigs: [[
-                        url: env.GIT_REPO,
-                        credentialsId: env.GIT_CREDENTIALS_ID
-                    ]]
-                ])
+                checkout scm
             }
         }
 
@@ -89,7 +92,7 @@ pipeline {
 
     post {
         success {
-            echo "✅ Staging deployment successful: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "✅ Staging deployment successful (${env.BRANCH_NAME}) : ${IMAGE_NAME}:${IMAGE_TAG}"
         }
         failure {
             echo "❌ Staging deployment failed"
@@ -99,7 +102,3 @@ pipeline {
         }
     }
 }
-
-
-
-//testing jenkinsfile on both deployments
