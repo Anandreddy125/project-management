@@ -103,4 +103,4 @@ pipeline {
 //created new pipeline job and testing with farhan on testing env
 // removed on jenkinsfile line no 5 skip default checkout.
 // changed webhook configuration
-// updated jenkinfile
+// updated jenkinfile not trigged
