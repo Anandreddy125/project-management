@@ -8,16 +8,25 @@ pipeline {
     }
 
     environment {
-        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID    = "terra-github"
-        DOCKER_CREDENTIALS_ID = "anand-dockerhub"
+        GIT_REPO                   = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID         = "terra-github"
+        DOCKER_CREDENTIALS_ID      = "anand-dockerhub"
 
+<<<<<<< HEAD
         DEPLOY_ENV            = "production"
         IMAGE_NAME                = "anrs125/reports-tesing"
         KUBERNETES_CREDENTIALS_ID = "testing-anand"
         DEPLOYMENT_FILE       = "prod-reports.yaml"
         DEPLOYMENT_NAME       = "prod-reports-api"
         NAMESPACE             = "reports-production"
+=======
+        DEPLOY_ENV                 = "production"
+        IMAGE_NAME                 = "anrs125/reports-tesing"
+        KUBERNETES_CREDENTIALS_ID  = "testing-anand"
+        DEPLOYMENT_FILE            = "prod-reports.yaml"
+        DEPLOYMENT_NAME            = "prod-reports-api"
+        NAMESPACE                  = "reports-production"
+>>>>>>> a7eefb65c54f38a6e5d833841e580ba682c04911
     }
 
     stages {
@@ -26,7 +35,11 @@ pipeline {
             steps {
                 script {
                     if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
+<<<<<<< HEAD
                         error("This pipeline runs only for git tags")
+=======
+                        error("❌ This pipeline runs ONLY for git tags")
+>>>>>>> a7eefb65c54f38a6e5d833841e580ba682c04911
                     }
 
                     env.IMAGE_TAG = env.GIT_BRANCH
@@ -34,14 +47,23 @@ pipeline {
                         .replaceAll("\\^\\{\\}", "")
                         .trim()
 
+<<<<<<< HEAD
                     echo "Production release tag: ${env.IMAGE_TAG}"
+=======
+                    echo "✅ Production release tag detected: ${env.IMAGE_TAG}"
+>>>>>>> a7eefb65c54f38a6e5d833841e580ba682c04911
                 }
             }
         }
 
         stage('Checkout Tag') {
             steps {
+<<<<<<< HEAD
                 checkout([$class: 'GitSCM',
+=======
+                checkout([
+                    $class: 'GitSCM',
+>>>>>>> a7eefb65c54f38a6e5d833841e580ba682c04911
                     branches: [[name: "refs/tags/${env.IMAGE_TAG}"]],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
@@ -85,7 +107,14 @@ pipeline {
 
     post {
         success {
+<<<<<<< HEAD
             echo "✅ Production deployment successful for ${IMAGE_TAG}"
+=======
+            echo "✅ Production deployment successful for tag ${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Production deployment failed"
+>>>>>>> a7eefb65c54f38a6e5d833841e580ba682c04911
         }
         always {
             cleanWs()
