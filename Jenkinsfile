@@ -8,99 +8,109 @@ pipeline {
     }
 
     environment {
-        GIT_CREDENTIALS_ID    = "github-anand"
-        DOCKER_CREDENTIALS_ID = "docker-test"
-        IMAGE_NAME            = "anrs125/testing-repo"
+        GIT_REPO                  = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID        = "terra-github"
+        DOCKER_CREDENTIALS_ID     = "anand-dockerhub"
+
+        IMAGE_NAME                = "anrs125/reports-testing"
+        KUBERNETES_CREDENTIALS_ID = "testing-anand"
+        DEPLOYMENT_FILE           = "prod-reports.yaml"
+        DEPLOYMENT_NAME           = "prod-reports-api"
+        NAMESPACE                 = "reports-production"
     }
 
     stages {
 
-        /* ================= CHECKOUT ================= */
-        stage('Checkout') {
+        /* ---------------- CHECKOUT ---------------- */
+        stage('Checkout Code') {
             steps {
                 checkout scm
-                script {
-                    echo "BRANCH_NAME = ${env.BRANCH_NAME}"
-                    echo "TAG_NAME    = ${env.TAG_NAME ?: 'N/A'}"
-                }
             }
         }
 
-        /* ================= STAGING ================= */
-        stage('Staging Build') {
-            when {
-                allOf {
-                    branch 'staging'
-                    not { buildingTag() }
-                }
-            }
+        /* ---------------- VALIDATE TAG ---------------- */
+        stage('Validate Tag From Master') {
             steps {
                 script {
-                    def commitId = sh(
-                        script: "git rev-parse --short HEAD",
+
+                    /* ----- Skip non-tag builds ----- */
+                    if (!env.TAG_NAME) {
+                        echo "⏭️ Not a tag build. Skipping production deployment."
+                        currentBuild.result = 'SUCCESS'
+                        error("Branch build detected")
+                    }
+
+                    echo "🔖 Tag detected: ${env.TAG_NAME}"
+
+                    /* ----- Fetch all refs ----- */
+                    sh 'git fetch --all --tags'
+
+                    /* ----- Check tag belongs to master ----- */
+                    def branches = sh(
+                        script: "git branch -r --contains ${env.TAG_NAME}",
                         returnStdout: true
                     ).trim()
 
-                    env.IMAGE_TAG = "staging-${commitId}"
-                    echo "Staging image tag: ${env.IMAGE_TAG}"
-                }
+                    if (!branches.contains('origin/master')) {
+                        echo "❌ Tag ${env.TAG_NAME} was NOT created from master branch"
+                        echo "Found in branches:"
+                        echo branches
+                        currentBuild.result = 'SUCCESS'
+                        error("Invalid tag source")
+                    }
 
-                withCredentials([usernamePassword(
-                    credentialsId: env.DOCKER_CREDENTIALS_ID,
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASSWORD'
-                )]) {
-                    sh """
-                        echo "\$DOCKER_PASSWORD" | docker login -u "\$DOCKER_USER" --password-stdin
-                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
-                    """
+                    echo "✅ Tag ${env.TAG_NAME} verified from master"
+                    env.IMAGE_TAG = env.TAG_NAME
                 }
-
-                echo "✅ STAGING deployment completed"
             }
         }
 
-        /* ================= PRODUCTION ================= */
-        stage('Production Build') {
-            when {
-                buildingTag()
-            }
+        /* ---------------- DOCKER BUILD ---------------- */
+        stage('Docker Build & Push') {
             steps {
-                script {
-                    env.IMAGE_TAG = env.TAG_NAME
-                    echo "Production tag detected: ${env.IMAGE_TAG}"
-                }
-
-                /* ---- Enforce tag must be from master ---- */
-                sh '''
-                    git branch -r --contains ${IMAGE_TAG} | grep origin/master
-                '''
-
                 withCredentials([usernamePassword(
                     credentialsId: env.DOCKER_CREDENTIALS_ID,
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
                     sh """
-                        echo "\$DOCKER_PASSWORD" | docker login -u "\$DOCKER_USER" --password-stdin
+                        echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USER --password-stdin
                         docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                        docker logout
                     """
                 }
+            }
+        }
 
-                echo "✅ PRODUCTION deployment completed"
+        /* ---------------- DEPLOY ---------------- */
+        stage('Deploy to Production') {
+            steps {
+                dir('kubernetes') {
+                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
+                        sh """
+                            sed -i 's|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' ${DEPLOYMENT_FILE}
+                            kubectl apply -f ${DEPLOYMENT_FILE} -n ${NAMESPACE}
+                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE}
+                        """
+                    }
+                }
             }
         }
     }
 
     post {
+        success {
+            echo "✅ Production deployment successful for tag: ${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Deployment failed for tag: ${IMAGE_TAG}"
+        }
         always {
             cleanWs()
         }
     }
 }
-//created new pipeline job and testing with farhan on testing env
-// removed on jenkinsfile line no 5 skip default checkout.
-// changed webhook configuration
-// updated jenkinfile
+
+
+//added jenkinsfile on github
