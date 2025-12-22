@@ -1,25 +1,24 @@
 pipeline {
     agent any
 
-    options {
-        disableConcurrentBuilds()
-        timestamps()
-        timeout(time: 60, unit: 'MINUTES')
-    }
-
     environment {
-        SCANNER_HOME          = tool('sonar-scanner')
-        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID    = "terra-github"
-        DOCKER_CREDENTIALS_ID = "anand-dockerhub"
-        SONARQUBE_ENV         = "sonar-server"
+        GIT_REPO                  = "https://github.com/Anandreddy125/project-management.git"
+        GIT_BRANCH                = "staging"
+        GIT_CREDENTIALS_ID        = "terra-github"
+        DOCKER_CREDENTIALS_ID     = "anand-dockerhub"
 
-        DEPLOY_ENV                 = "staging"
+        DEPLOY_ENV                = "staging"
         IMAGE_NAME                = "anrs125/reports-tesing"
         KUBERNETES_CREDENTIALS_ID = "testing-anand"
         DEPLOYMENT_FILE           = "staging-report.yaml"
         DEPLOYMENT_NAME           = "staging-reports-api"
         NAMESPACE                 = "reports-staging"
+    }
+
+    parameters {
+        booleanParam(name: 'ROLLBACK', defaultValue: false, description: 'Enable rollback deployment')
+        string(name: 'TARGET_VERSION', defaultValue: '', description: 'Target version tag for rollback')
+        booleanParam(name: 'FORCE_BUILD', defaultValue: false, description: 'Force rebuild even if no code change')
     }
 
     triggers {
@@ -36,7 +35,7 @@ pipeline {
             steps {
                 checkout([
                     $class: 'GitSCM',
-                    branches: [[name: 'staging']],
+                    branches: [[name: "*/${env.GIT_BRANCH}"]],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
@@ -48,14 +47,23 @@ pipeline {
         stage('Generate Image Tag') {
             steps {
                 script {
-                    def commitId = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    def commitId = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
                     env.IMAGE_TAG = "staging-${commitId}"
-                    echo "Staging image tag: ${env.IMAGE_TAG}"
+                    echo "Image tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
         stage('Docker Build & Push') {
+            when {
+                anyOf {
+                    changeset "**"
+                    expression { params.FORCE_BUILD }
+                }
+            }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: env.DOCKER_CREDENTIALS_ID,
