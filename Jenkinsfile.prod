@@ -8,21 +8,21 @@ pipeline {
     }
 
     environment {
-        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID    = "github-anand"
-        DOCKER_CREDENTIALS_ID = "docker-test"
+        GIT_REPO              = "https://github.com/prophaze-tech/reports.git"
+        GIT_CREDENTIALS_ID    = "github1"
+        DOCKER_CREDENTIALS_ID = "docker-report"
 
         DEPLOY_ENV = "production"
-        IMAGE_NAME = "anrs125/testing-repo"
+        IMAGE_NAME = "prophazedocker/i-report"
     }
 
     stages {
 
-        stage('Detect Tag') {
+        stage('Detect Release Tag') {
             steps {
                 script {
                     if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
-                        error("❌ This pipeline runs only for Git tags")
+                        error("❌ This production pipeline runs ONLY for Git tags")
                     }
 
                     env.IMAGE_TAG = env.GIT_BRANCH
@@ -30,12 +30,12 @@ pipeline {
                         .replaceAll("\\^\\{\\}", "")
                         .trim()
 
-                    echo "🚀 Production release tag: ${env.IMAGE_TAG}"
+                    echo "🚀 Release tag detected: ${env.IMAGE_TAG}"
                 }
             }
         }
 
-        stage('Checkout Tag') {
+        stage('Checkout Release Tag') {
             steps {
                 checkout([
                     $class: 'GitSCM',
@@ -68,11 +68,14 @@ pipeline {
 
     post {
         success {
-            echo "✅ Production deployment successful for tag ${IMAGE_TAG}"
+            echo "✅ Production Docker image pushed successfully"
+            echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
         }
+
         failure {
-            echo "❌ Production deployment failed"
+            echo "❌ Production pipeline failed"
         }
+
         always {
             cleanWs()
         }
