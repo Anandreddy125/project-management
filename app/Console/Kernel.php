@@ -35,3 +35,4 @@ class Kernel extends ConsoleKernel final test for docker build image
 //git switch staging
 ///jenkinsfile
 // changed jenkinsfile
+// deleted jenkinsfile
