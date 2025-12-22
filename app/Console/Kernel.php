@@ -32,26 +32,3 @@ class Kernel extends ConsoleKernel final test for docker build image
         require base_path('routes/console.php');
     }
 }
-// Test for directly building after merge with commit and add on master branch.
-// Cross Testing for master branch.
-// testing prod deploy tagging
-//testing error on jenkinsq
-//tagging not working and webhook also
-// the jenkinsfile change 
-// made some change on the jenkinsfile
-// jenkinsfile didnt save.
-// the git tag is not fetch latest.
-//master tagging is working.
-// add on jenkinsfile githubPush()
-//testing on commit and tag or version
-//Even if Jenkins was triggered by master, you force checkout of staging.
-//testing with farhan 
-// testing behaviour
-// tetsing refs/tags/ on jenkins multibranch
-// changed webhook configuration.
-//deleted jenkinsfiles in this project.
-// tetsing refs/tags/ on jenkins multibranch
-// issues on branch with webhook\
-// issue on jenkinsfile zfhgvfjksvg
-//jenkinsfile updated
-// jenkinsfile
