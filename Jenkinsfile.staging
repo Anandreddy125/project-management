@@ -12,8 +12,8 @@ pipeline {
         GIT_CREDENTIALS_ID    = "github-anand"
         DOCKER_CREDENTIALS_ID = "docker-test"
 
-        DEPLOY_ENV            = "production"
-        IMAGE_NAME                = "anrs125/testing-repo"
+        DEPLOY_ENV = "production"
+        IMAGE_NAME = "anrs125/testing-repo"
     }
 
     stages {
@@ -22,7 +22,7 @@ pipeline {
             steps {
                 script {
                     if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
-                        error("This pipeline runs only for git tags")
+                        error("❌ This pipeline runs only for Git tags")
                     }
 
                     env.IMAGE_TAG = env.GIT_BRANCH
@@ -30,14 +30,15 @@ pipeline {
                         .replaceAll("\\^\\{\\}", "")
                         .trim()
 
-                    echo "Production release tag: ${env.IMAGE_TAG}"
+                    echo "🚀 Production release tag: ${env.IMAGE_TAG}"
                 }
             }
         }
 
         stage('Checkout Tag') {
             steps {
-                checkout([$class: 'GitSCM',
+                checkout([
+                    $class: 'GitSCM',
                     branches: [[name: "refs/tags/${env.IMAGE_TAG}"]],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
@@ -54,26 +55,12 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
-                    sh """
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
+                    sh '''
+                        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USER" --password-stdin
                         docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
                         docker logout
-                    """
-                }
-            }
-        }
-
-        stage('Deploy to Production') {
-            steps {
-                dir('kubernetes') {
-                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
-                        sh """
-                            sed -i 's|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' ${DEPLOYMENT_FILE}
-                            kubectl apply -f ${DEPLOYMENT_FILE} -n ${NAMESPACE}
-                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE}
-                        """
-                    }
+                    '''
                 }
             }
         }
@@ -81,12 +68,14 @@ pipeline {
 
     post {
         success {
-            echo "✅ Production deployment successful for ${IMAGE_TAG}"
+            echo "✅ Production deployment successful for tag ${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Production deployment failed"
         }
         always {
             cleanWs()
         }
     }
 }
-
-//jenkinsfile.staging
+//sdmfgkdj
