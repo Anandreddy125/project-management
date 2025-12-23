@@ -12,162 +12,72 @@ pipeline {
         DOCKER_CREDENTIALS_ID = "docker-test"
         IMAGE_NAME            = "anrs125/testing-repo"
     }
-    triggers {
-        githubPush()
-    }
-    stages {
-        /* ================= CLEAN ================= */
-        stage('Clean Workspace') {
-            steps {
-                cleanWs()
-            }
-        }
-        /* ================= CHECKOUT MASTER ================= */
-        stage('Checkout Master') {
-            steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: 'refs/heads/master']],
-                    userRemoteConfigs: [[
-                        url: env.GIT_REPO,
-                        credentialsId: env.GIT_CREDENTIALS_ID
-                    ]]
-                ])
-                // fetch tags explicitly
-                sh 'git fetch --tags'
-            }
-        }
-        /* ================= VALIDATE TAG ================= */
-        stage('Validate Production Tag') {
-            steps {
-                script {
-                    // Detect tag pointing to HEAD
-                    def tag = sh(
-                        script: "git tag --points-at HEAD | head -n 1",
-                        returnStdout: true
-                    ).trim()
-                    if (!tag) {
-                        echo ":information_source: No tag on master HEAD. Skipping production build."
-                        currentBuild.result = 'NOT_BUILT'
-                        return
-                    }
-                    // Ensure tag belongs to master
-                    def onMaster = sh(
-                        script: "git branch -r --contains ${tag} | grep origin/master || true",
-                        returnStdout: true
-                    ).trim()
-                    if (!onMaster) {
-                        error(":x: Tag ${tag} does NOT belong to master branch")
-                    }
-                    env.IMAGE_TAG = tag
-                    echo ":white_check_mark: Production tag verified: ${env.IMAGE_TAG}"
-                }
-            }
-        }
-        /* ================= BUILD & PUSH ================= */
-        stage('Docker Build & Push') {
-            when {
-                expression { env.IMAGE_TAG?.trim() }
-            }
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: env.DOCKER_CREDENTIALS_ID,
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASSWORD'
-                )]) {
-                    sh """
-                        echo "\$DOCKER_PASSWORD" | docker login -u "\$DOCKER_USER" --password-stdin
-                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
-                    """
-                }
-            }
-        }
-    }
-    post {
-        success {
-            echo ":white_check_mark: Production build successful"
-            echo "Docker Image: ${IMAGE_NAME}:${IMAGE_TAG}"
-        }
-        always {
-            cleanWs()
-        }
-    }
-}
-Anand Reddy
-  9:27 AM
-pipeline {
-    agent any
-    options {
-        skipDefaultCheckout()
-        disableConcurrentBuilds()
-        timestamps()
-        timeout(time: 60, unit: 'MINUTES')
-    }
-    environment {
-        GIT_REPO           = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID = "github-anand"
-        DOCKER_CREDENTIALS_ID = "docker-test"
-        IMAGE_NAME            = "anrs125/testing-repo"
-    }
     /*
-     :x: DO NOT use githubPush()
-     :white_check_mark: Job is triggered via Generic Webhook Trigger (configured in UI)
+      IMPORTANT:
+      - Job is triggered by Generic Webhook Trigger
+      - Webhook provides variable: ref = refs/tags/v1.0.0
     */
     stages {
+        /* ================= PRE-CHECK ================= */
+        stage('Validate Webhook Event') {
+            steps {
+                script {
+                    if (!env.ref) {
+                        echo ":x: No ref received from webhook"
+                        currentBuild.result = 'NOT_BUILT'
+                        return
+                    }
+                    if (!env.ref.startsWith("refs/tags/")) {
+                        echo ":information_source: Not a tag push (${env.ref}). Skipping build."
+                        currentBuild.result = 'NOT_BUILT'
+                        return
+                    }
+                    env.IMAGE_TAG = env.ref.replace("refs/tags/", "")
+                    echo ":white_check_mark: Tag detected from webhook: ${env.IMAGE_TAG}"
+                }
+            }
+        }
         /* ================= CLEAN ================= */
         stage('Clean Workspace') {
+            when { expression { env.IMAGE_TAG } }
             steps {
                 cleanWs()
             }
         }
-        /* ================= CHECKOUT MASTER ================= */
-        stage('Checkout Master') {
+        /* ================= CHECKOUT ================= */
+        stage('Checkout Tag') {
+            when { expression { env.IMAGE_TAG } }
             steps {
                 checkout([
                     $class: 'GitSCM',
-                    branches: [[name: 'refs/heads/master']],
+                    branches: [[name: "refs/tags/${env.IMAGE_TAG}"]],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
                     ]]
                 ])
-                // Ensure all tags are available
-                sh 'git fetch --tags --force'
+                sh 'git fetch origin master --tags --force'
             }
         }
-        /* ================= VALIDATE TAG ================= */
-        stage('Validate Production Tag') {
+        /* ================= VERIFY MASTER ================= */
+        stage('Verify Tag Is From Master') {
+            when { expression { env.IMAGE_TAG } }
             steps {
                 script {
-                    // Detect tag pointing to master HEAD
-                    def tag = sh(
-                        script: "git tag --points-at HEAD | head -n 1",
-                        returnStdout: true
-                    ).trim()
-                    if (!tag) {
-                        echo ":information_source: No tag found on master HEAD. Skipping production build."
-                        currentBuild.result = 'NOT_BUILT'
-                        return
-                    }
-                    // Safety check: tag must belong to master
                     def onMaster = sh(
-                        script: "git branch -r --contains ${tag} | grep origin/master || true",
+                        script: "git branch -r --contains HEAD | grep origin/master || true",
                         returnStdout: true
                     ).trim()
                     if (!onMaster) {
-                        error(":x: Tag ${tag} is NOT created from master branch")
+                        error(":x: Tag ${env.IMAGE_TAG} is NOT created from master branch")
                     }
-                    env.IMAGE_TAG = tag
-                    echo ":white_check_mark: Production tag verified: ${env.IMAGE_TAG}"
+                    echo ":white_check_mark: Tag ${env.IMAGE_TAG} verified on master branch"
                 }
             }
         }
         /* ================= BUILD & PUSH ================= */
         stage('Docker Build & Push') {
-            when {
-                expression { env.IMAGE_TAG?.trim() }
-            }
+            when { expression { env.IMAGE_TAG } }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: env.DOCKER_CREDENTIALS_ID,
@@ -185,11 +95,15 @@ pipeline {
     }
     post {
         success {
-            echo ":white_check_mark: Production build successful"
-            echo ":rocket: Docker Image pushed: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo ":rocket: Production image pushed successfully"
+            echo "IMAGE: ${IMAGE_NAME}:${IMAGE_TAG}"
         }
         always {
             cleanWs()
         }
     }
 }
+
+
+
+
