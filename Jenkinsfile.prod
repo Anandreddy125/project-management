@@ -1,53 +1,74 @@
 pipeline {
     agent any
-
     options {
+        skipDefaultCheckout()
         disableConcurrentBuilds()
         timestamps()
         timeout(time: 60, unit: 'MINUTES')
     }
-
     environment {
-        GIT_REPO              = "https://github.com/Anandreddy125/project-management.git"
-        GIT_CREDENTIALS_ID    = "github-anand"
+        GIT_REPO           = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID = "github-anand"
         DOCKER_CREDENTIALS_ID = "docker-test"
-
-        DEPLOY_ENV            = "production"
-        IMAGE_NAME                = "anrs125/testing-repo"
+        IMAGE_NAME            = "anrs125/testing-repo"
     }
-
+    triggers {
+        githubPush()
+    }
     stages {
-
-        stage('Detect Tag') {
+        /* ================= CLEAN ================= */
+        stage('Clean Workspace') {
             steps {
-                script {
-                    if (!env.GIT_BRANCH?.startsWith("refs/tags/")) {
-                        error("This pipeline runs only for git tags")
-                    }
-
-                    env.IMAGE_TAG = env.GIT_BRANCH
-                        .replace("refs/tags/", "")
-                        .replaceAll("\\^\\{\\}", "")
-                        .trim()
-
-                    echo "Production release tag: ${env.IMAGE_TAG}"
-                }
+                cleanWs()
             }
         }
-
-        stage('Checkout Tag') {
+        /* ================= CHECKOUT MASTER ================= */
+        stage('Checkout Master') {
             steps {
-                checkout([$class: 'GitSCM',
-                    branches: [[name: "refs/tags/${env.IMAGE_TAG}"]],
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: 'refs/heads/master']],
                     userRemoteConfigs: [[
                         url: env.GIT_REPO,
                         credentialsId: env.GIT_CREDENTIALS_ID
                     ]]
                 ])
+                // fetch tags explicitly
+                sh 'git fetch --tags'
             }
         }
-
+        /* ================= VALIDATE TAG ================= */
+        stage('Validate Production Tag') {
+            steps {
+                script {
+                    // Detect tag pointing to HEAD
+                    def tag = sh(
+                        script: "git tag --points-at HEAD | head -n 1",
+                        returnStdout: true
+                    ).trim()
+                    if (!tag) {
+                        echo ":information_source: No tag on master HEAD. Skipping production build."
+                        currentBuild.result = 'NOT_BUILT'
+                        return
+                    }
+                    // Ensure tag belongs to master
+                    def onMaster = sh(
+                        script: "git branch -r --contains ${tag} | grep origin/master || true",
+                        returnStdout: true
+                    ).trim()
+                    if (!onMaster) {
+                        error(":x: Tag ${tag} does NOT belong to master branch")
+                    }
+                    env.IMAGE_TAG = tag
+                    echo ":white_check_mark: Production tag verified: ${env.IMAGE_TAG}"
+                }
+            }
+        }
+        /* ================= BUILD & PUSH ================= */
         stage('Docker Build & Push') {
+            when {
+                expression { env.IMAGE_TAG?.trim() }
+            }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: env.DOCKER_CREDENTIALS_ID,
@@ -55,33 +76,117 @@ pipeline {
                     passwordVariable: 'DOCKER_PASSWORD'
                 )]) {
                     sh """
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
+                        echo "\$DOCKER_PASSWORD" | docker login -u "\$DOCKER_USER" --password-stdin
                         docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         docker push ${IMAGE_NAME}:${IMAGE_TAG}
-                        docker logout
                     """
                 }
             }
         }
-
-        stage('Deploy to Production') {
+    }
+    post {
+        success {
+            echo ":white_check_mark: Production build successful"
+            echo "Docker Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
+Anand Reddy
+  9:27 AM
+pipeline {
+    agent any
+    options {
+        skipDefaultCheckout()
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+    }
+    environment {
+        GIT_REPO           = "https://github.com/Anandreddy125/project-management.git"
+        GIT_CREDENTIALS_ID = "github-anand"
+        DOCKER_CREDENTIALS_ID = "docker-test"
+        IMAGE_NAME            = "anrs125/testing-repo"
+    }
+    /*
+     :x: DO NOT use githubPush()
+     :white_check_mark: Job is triggered via Generic Webhook Trigger (configured in UI)
+    */
+    stages {
+        /* ================= CLEAN ================= */
+        stage('Clean Workspace') {
             steps {
-                dir('kubernetes') {
-                    withKubeConfig(credentialsId: env.KUBERNETES_CREDENTIALS_ID) {
-                        sh """
-                            sed -i 's|image: .*|image: ${IMAGE_NAME}:${IMAGE_TAG}|' ${DEPLOYMENT_FILE}
-                            kubectl apply -f ${DEPLOYMENT_FILE} -n ${NAMESPACE}
-                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE}
-                        """
+                cleanWs()
+            }
+        }
+        /* ================= CHECKOUT MASTER ================= */
+        stage('Checkout Master') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: 'refs/heads/master']],
+                    userRemoteConfigs: [[
+                        url: env.GIT_REPO,
+                        credentialsId: env.GIT_CREDENTIALS_ID
+                    ]]
+                ])
+                // Ensure all tags are available
+                sh 'git fetch --tags --force'
+            }
+        }
+        /* ================= VALIDATE TAG ================= */
+        stage('Validate Production Tag') {
+            steps {
+                script {
+                    // Detect tag pointing to master HEAD
+                    def tag = sh(
+                        script: "git tag --points-at HEAD | head -n 1",
+                        returnStdout: true
+                    ).trim()
+                    if (!tag) {
+                        echo ":information_source: No tag found on master HEAD. Skipping production build."
+                        currentBuild.result = 'NOT_BUILT'
+                        return
                     }
+                    // Safety check: tag must belong to master
+                    def onMaster = sh(
+                        script: "git branch -r --contains ${tag} | grep origin/master || true",
+                        returnStdout: true
+                    ).trim()
+                    if (!onMaster) {
+                        error(":x: Tag ${tag} is NOT created from master branch")
+                    }
+                    env.IMAGE_TAG = tag
+                    echo ":white_check_mark: Production tag verified: ${env.IMAGE_TAG}"
+                }
+            }
+        }
+        /* ================= BUILD & PUSH ================= */
+        stage('Docker Build & Push') {
+            when {
+                expression { env.IMAGE_TAG?.trim() }
+            }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: env.DOCKER_CREDENTIALS_ID,
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASSWORD'
+                )]) {
+                    sh """
+                        echo "\$DOCKER_PASSWORD" | docker login -u "\$DOCKER_USER" --password-stdin
+                        docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                    """
                 }
             }
         }
     }
-
     post {
         success {
-            echo "✅ Production deployment successful for ${IMAGE_TAG}"
+            echo ":white_check_mark: Production build successful"
+            echo ":rocket: Docker Image pushed: ${IMAGE_NAME}:${IMAGE_TAG}"
         }
         always {
             cleanWs()
